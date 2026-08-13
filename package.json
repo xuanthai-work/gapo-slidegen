@@ -1,0 +1,18 @@
+{
+  "name": "gapo-slidegen",
+  "private": true,
+  "workspaces": [
+    "apps/web",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace @gapo-slidegen/web",
+    "build": "npm run build --workspace @gapo-slidegen/web",
+    "lint": "npm run lint --workspace @gapo-slidegen/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "contracts:generate": "npm run generate --workspace @gapo-slidegen/contracts"
+  },
+  "engines": {
+    "node": ">=20.9.0"
+  }
+}
