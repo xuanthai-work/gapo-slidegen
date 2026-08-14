@@ -14,6 +14,12 @@ Status: passed for the product boundary, partial for the full editor port
 - Text and shape elements can be selected, dragged, resized, and rotated.
 - Property-panel text changes flow through the same validated operation
   boundary used by canvas changes.
+- Users can add, remove, and reorder slides; insert text and rectangle shapes;
+  and remove selected elements through canonical edit operations.
+- Presentations enforce a shared 1-to-30-slide invariant in the browser schema
+  and autosave API.
+- Undo and redo keep a bounded 100-step history inside the editor boundary and
+  emit replacement operations through the normal persistence callback.
 - Next.js 16.3.0 builds the workspace packages with Turbopack.
 
 ## What this spike is not

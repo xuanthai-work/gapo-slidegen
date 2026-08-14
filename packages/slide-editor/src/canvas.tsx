@@ -3,7 +3,7 @@
 import type Konva from "konva";
 import type { KonvaEventObject } from "konva/lib/Node";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Ellipse, Layer, Line, Rect, Stage, Text, Transformer } from "react-konva";
+import { Ellipse, Image as KonvaImage, Layer, Line, Rect, Shape as KonvaShape, Stage, Text, Transformer } from "react-konva";
 import {
   EDITOR_STAGE_HEIGHT,
   EDITOR_STAGE_WIDTH,
@@ -17,6 +17,8 @@ export type SlideCanvasProps = {
   selectedElementId: string | null;
   onSelectElement: (elementId: string | null) => void;
   onChangeElement: (element: SlideElement) => void;
+  readOnly?: boolean;
+  resolveAssetUrl?: (assetId: string) => string;
 };
 
 function elementFill(element: ShapeElement): string {
@@ -28,12 +30,33 @@ function ElementNode({
   onSelect,
   onChange,
   registerNode,
+  readOnly = false,
+  resolveAssetUrl,
 }: {
   element: SlideElement;
   onSelect: () => void;
   onChange: (element: SlideElement) => void;
   registerNode: (id: string, node: Konva.Node | null) => void;
+  readOnly?: boolean;
+  resolveAssetUrl?: (assetId: string) => string;
 }) {
+  const [loadedImage, setLoadedImage] = useState<HTMLImageElement | null>(null);
+  const assetId = element.type === "image" ? element.assetId : null;
+  useEffect(() => {
+    if (!assetId || !resolveAssetUrl) {
+      setLoadedImage(null);
+      return;
+    }
+    const image = new window.Image();
+    image.onload = () => setLoadedImage(image);
+    image.onerror = () => setLoadedImage(null);
+    image.src = resolveAssetUrl(assetId);
+    return () => {
+      image.onload = null;
+      image.onerror = null;
+    };
+  }, [assetId, resolveAssetUrl]);
+
   const common = {
     id: element.id,
     x: element.position.x,
@@ -42,9 +65,9 @@ function ElementNode({
     height: element.size.height,
     rotation: element.rotation,
     opacity: element.opacity,
-    draggable: !element.locked,
-    onClick: onSelect,
-    onTap: onSelect,
+    draggable: !readOnly && !element.locked,
+    listening: !readOnly,
+    ...(readOnly ? {} : { onClick: onSelect, onTap: onSelect }),
     onDragEnd: (event: KonvaEventObject<DragEvent>) => {
       onChange({
         ...element,
@@ -79,7 +102,10 @@ function ElementNode({
         fill={element.font?.color ?? "#172033"}
         fontFamily={element.font?.family ?? "Arial"}
         fontSize={element.font?.size ?? 54}
-        fontStyle={element.font?.bold ? "bold" : "normal"}
+        fontStyle={[
+          element.font?.bold ? "bold" : "",
+          element.font?.italic ? "italic" : "",
+        ].filter(Boolean).join(" ") || "normal"}
         lineHeight={element.font?.lineHeight ?? 1.15}
         align={element.horizontalAlign}
         verticalAlign={element.verticalAlign === "middle" ? "middle" : element.verticalAlign}
@@ -103,6 +129,34 @@ function ElementNode({
       );
     }
 
+    if (element.shape === "triangle" || element.shape === "diamond") {
+      return (
+        <KonvaShape
+          {...common}
+          fill={elementFill(element)}
+          strokeWidth={element.stroke?.width ?? 0}
+          {...(element.stroke ? { stroke: element.stroke.color } : {})}
+          sceneFunc={(context, shape) => {
+            const width = shape.width();
+            const height = shape.height();
+            context.beginPath();
+            if (element.shape === "triangle") {
+              context.moveTo(width / 2, 0);
+              context.lineTo(width, height);
+              context.lineTo(0, height);
+            } else {
+              context.moveTo(width / 2, 0);
+              context.lineTo(width, height / 2);
+              context.lineTo(width / 2, height);
+              context.lineTo(0, height / 2);
+            }
+            context.closePath();
+            context.fillStrokeShape(shape);
+          }}
+        />
+      );
+    }
+
     return (
       <Rect
         {...common}
@@ -110,6 +164,29 @@ function ElementNode({
         strokeWidth={element.stroke?.width ?? 0}
         cornerRadius={element.cornerRadius}
         {...(element.stroke ? { stroke: element.stroke.color } : {})}
+      />
+    );
+  }
+
+  if (element.type === "image") {
+    if (!loadedImage) {
+      return <Rect {...common} fill="#E9EDF3" stroke="#B8C2D0" strokeWidth={2} />;
+    }
+    const sourceRatio = loadedImage.naturalWidth / loadedImage.naturalHeight;
+    const targetRatio = element.size.width / Math.max(1, element.size.height);
+    let cropWidth = loadedImage.naturalWidth;
+    let cropHeight = loadedImage.naturalHeight;
+    if (element.fit === "cover") {
+      if (sourceRatio > targetRatio) cropWidth = loadedImage.naturalHeight * targetRatio;
+      else cropHeight = loadedImage.naturalWidth / targetRatio;
+    }
+    const cropX = (loadedImage.naturalWidth - cropWidth) * element.focusX;
+    const cropY = (loadedImage.naturalHeight - cropHeight) * element.focusY;
+    return (
+      <KonvaImage
+        {...common}
+        image={loadedImage}
+        crop={{ x: cropX, y: cropY, width: cropWidth, height: cropHeight }}
       />
     );
   }
@@ -143,6 +220,8 @@ export function SlideCanvas({
   selectedElementId,
   onSelectElement,
   onChangeElement,
+  readOnly = false,
+  resolveAssetUrl,
 }: SlideCanvasProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const transformerRef = useRef<Konva.Transformer>(null);
@@ -161,13 +240,13 @@ export function SlideCanvas({
 
   useEffect(() => {
     const transformer = transformerRef.current;
-    if (!transformer) return;
+    if (!transformer || readOnly) return;
     const selectedNode = selectedElementId
       ? nodesRef.current.get(selectedElementId)
       : undefined;
     transformer.nodes(selectedNode ? [selectedNode] : []);
     transformer.getLayer()?.batchDraw();
-  }, [selectedElementId, elements]);
+  }, [selectedElementId, elements, readOnly]);
 
   const scale = useMemo(
     () => Math.min(1, Math.max(0.1, hostWidth / EDITOR_STAGE_WIDTH)),
@@ -182,7 +261,7 @@ export function SlideCanvas({
         scaleX={scale}
         scaleY={scale}
         onMouseDown={(event) => {
-          if (event.target === event.target.getStage()) onSelectElement(null);
+          if (!readOnly && event.target === event.target.getStage()) onSelectElement(null);
         }}
       >
         <Layer>
@@ -198,24 +277,28 @@ export function SlideCanvas({
               element={element}
               onSelect={() => onSelectElement(element.id)}
               onChange={onChangeElement}
+              readOnly={readOnly}
+              {...(resolveAssetUrl ? { resolveAssetUrl } : {})}
               registerNode={(id, node) => {
                 if (node) nodesRef.current.set(id, node);
                 else nodesRef.current.delete(id);
               }}
             />
           ))}
-          <Transformer
-            ref={transformerRef}
-            rotateEnabled
-            flipEnabled={false}
-            borderStroke="#285FC7"
-            anchorStroke="#285FC7"
-            anchorFill="#FFFFFF"
-            anchorSize={10}
-            boundBoxFunc={(oldBox, nextBox) =>
-              nextBox.width < 8 || nextBox.height < 8 ? oldBox : nextBox
-            }
-          />
+          {!readOnly ? (
+            <Transformer
+              ref={transformerRef}
+              rotateEnabled
+              flipEnabled={false}
+              borderStroke="#285FC7"
+              anchorStroke="#285FC7"
+              anchorFill="#FFFFFF"
+              anchorSize={10}
+              boundBoxFunc={(oldBox, nextBox) =>
+                nextBox.width < 8 || nextBox.height < 8 ? oldBox : nextBox
+              }
+            />
+          ) : null}
         </Layer>
       </Stage>
     </div>

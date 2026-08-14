@@ -1,6 +1,6 @@
 # M1 document ingestion and DB-backed jobs
 
-Status: ingestion and source persistence implemented; cleanup worker pending
+Status: ingestion, source persistence, and retention cleanup implemented
 
 ## Implemented boundary
 
@@ -31,6 +31,21 @@ Allowed transitions are:
 - `running -> succeeded | failed | canceled`
 - terminal states cannot transition again
 
+The authenticated job API also exposes cooperative cancellation for queued or
+running jobs. Canceling a running provider request cannot interrupt an external
+HTTP call already in flight, but the worker checks the authoritative job state
+before persistence, so a late provider response cannot create a presentation.
+Job lookups and cancellation both filter by owner. Claimed jobs report initial
+progress immediately, and the dashboard exposes a progress bar, cancel state,
+failure detail, and retry action.
+
+The dashboard also loads the owner's bounded recent generation-job list on
+startup. If the latest job is still queued or running, it restores the source
+context and resumes polling; completion still opens the persisted presentation.
+The latest failed or canceled job is restored when its retained source remains
+available, so retry survives a browser refresh. Polling is single-job and
+retries transient read failures without enqueuing duplicate generation work.
+
 The current concurrency target is two generation jobs. Redis is intentionally
 not required at this scale. It can later be added for ephemeral signals or a
 higher-throughput broker while PostgreSQL remains authoritative.
@@ -41,11 +56,15 @@ higher-throughput broker while PostgreSQL remains authoritative.
 approved automatic-deletion requirement. Authentication now establishes
 ownership. Raw uploads are written under an owner-specific prefix, and a failed
 database flush removes the just-written file to avoid an orphan. The default
-retention period is 24 hours and is configurable. The scheduled cleanup worker
-remains to be wired.
+retention period is 24 hours and is configurable. A separate scheduled worker
+deletes expired storage objects and records in bounded, row-locked batches.
+Sources referenced by queued or running jobs are skipped so generation cannot
+lose its input mid-flight. Object deletion happens before the database record
+is removed; failures roll back and retry on the next interval.
 
-The authenticated dashboard can create prompt/manuscript sources, upload
-supported documents, and list the latest 50 sources for the current owner. API
+The authenticated dashboard can create prompt/manuscript sources and upload
+supported documents, then immediately enqueue generation. Source history is not
+shown in the product UI; the API can still list the latest 50 sources for the current owner. API
 responses intentionally omit storage keys and owner ids.
 
 ## Dependency baseline checked 2026-08-14
@@ -75,6 +94,6 @@ Exact direct and transitive versions are recorded in `apps/api/uv.lock`.
 
 ## Next integration
 
-Add the scheduled retention cleanup worker and the real gateway provider
-adapter. Then add a PostgreSQL container integration test for migration
+Add the real gateway provider adapter. Then add a PostgreSQL container
+integration test for migration
 upgrade/downgrade and concurrent claims.

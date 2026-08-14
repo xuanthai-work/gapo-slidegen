@@ -352,7 +352,7 @@ export const presentationSchema = z.object({
   title: z.string().trim().min(1).max(500),
   language: z.string().trim().min(2).max(32),
   theme: themeSchema,
-  slides: z.array(slideSchema).max(30),
+  slides: z.array(slideSchema).min(1).max(30),
   revision: z.number().int().nonnegative().default(0),
 });
 

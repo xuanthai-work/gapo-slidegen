@@ -46,6 +46,12 @@ export const editOperationSchema = z.discriminatedUnion("type", [
     slideId: z.string().trim().min(1),
     elementId: z.string().trim().min(1),
   }),
+  operationBaseSchema.extend({
+    type: z.literal("move-element"),
+    slideId: z.string().trim().min(1),
+    elementId: z.string().trim().min(1),
+    index: z.number().int().nonnegative(),
+  }),
 ]);
 
 export type EditOperation = z.infer<typeof editOperationSchema>;
@@ -141,11 +147,17 @@ export function applyEditOperation(
   let next: Presentation = structuredClone(current);
 
   if (operation.type === "add-slide") {
+    if (next.slides.length >= 30) {
+      throw new EditOperationError("A presentation may contain at most 30 slides");
+    }
     if (next.slides.some((slide) => slide.id === operation.slide.id)) {
       throw new EditOperationError(`Slide ${operation.slide.id} already exists`);
     }
     next.slides.splice(Math.min(operation.index, next.slides.length), 0, operation.slide);
   } else if (operation.type === "remove-slide") {
+    if (next.slides.length === 1) {
+      throw new EditOperationError("A presentation must contain at least one slide");
+    }
     const length = next.slides.length;
     next.slides = next.slides.filter((slide) => slide.id !== operation.slideId);
     if (next.slides.length === length) {
@@ -170,12 +182,22 @@ export function applyEditOperation(
       slide.elements = result.replaced
         ? result.elements
         : [...slide.elements, operation.element];
-    } else {
+    } else if (operation.type === "remove-element") {
       const result = removeElement(slide.elements, operation.elementId);
       if (!result.removed) {
         throw new EditOperationError(`Element ${operation.elementId} was not found`);
       }
       slide.elements = result.elements;
+    } else {
+      const from = slide.elements.findIndex((element) => element.id === operation.elementId);
+      if (from < 0) {
+        throw new EditOperationError(`Element ${operation.elementId} was not found`);
+      }
+      const [element] = slide.elements.splice(from, 1);
+      if (!element) {
+        throw new EditOperationError(`Element ${operation.elementId} was not found`);
+      }
+      slide.elements.splice(Math.min(operation.index, slide.elements.length), 0, element);
     }
 
     slide.revision += 1;

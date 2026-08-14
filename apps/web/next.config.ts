@@ -4,6 +4,7 @@ const apiBaseUrl = process.env.SLIDEGEN_API_INTERNAL_URL ?? "http://127.0.0.1:80
 
 const nextConfig: NextConfig = {
   transpilePackages: [
+    "@gapo-slidegen/pptx-exporter",
     "@gapo-slidegen/slide-editor",
     "@gapo-slidegen/slide-schema",
   ],

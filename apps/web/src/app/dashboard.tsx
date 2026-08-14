@@ -2,12 +2,11 @@
 
 import {
   ArrowRight,
-  FileDoc,
-  FilePdf,
   FilePpt,
   MagicWand,
-  Plus,
+  PencilSimple,
   SignOut,
+  Trash,
   UploadSimple,
 } from "@phosphor-icons/react";
 import { useEffect, useRef, useState } from "react";
@@ -17,38 +16,69 @@ import {
   apiFetch,
   type CurrentUser,
   type GenerationJob,
+  type StoredPresentation,
   type StoredSource,
 } from "../lib/api";
 
 type ComposerMode = "prompt" | "manuscript" | "file";
+type ThemeId = "editorial-cobalt" | "warm-studio" | "midnight-signal";
 
-function sourceIcon(kind: StoredSource["kind"]) {
-  if (kind === "pdf") return <FilePdf size={20} />;
-  if (kind === "pptx") return <FilePpt size={20} />;
-  if (kind === "docx") return <FileDoc size={20} />;
-  return <MagicWand size={20} />;
-}
+const themes: Array<{ id: ThemeId; name: string; colors: [string, string, string] }> = [
+  { id: "editorial-cobalt", name: "Editorial", colors: ["#172033", "#285FC7", "#E3AA45"] },
+  { id: "warm-studio", name: "Warm Studio", colors: ["#2E2925", "#C45132", "#D9A441"] },
+  { id: "midnight-signal", name: "Midnight", colors: ["#09111F", "#4F86F7", "#F4B860"] },
+];
 
 export function Dashboard() {
   const [user, setUser] = useState<CurrentUser | null>(null);
-  const [sources, setSources] = useState<StoredSource[]>([]);
+  const [presentations, setPresentations] = useState<StoredPresentation[]>([]);
+  const [startingSourceId, setStartingSourceId] = useState<string | null>(null);
+  const [activeGenerationSource, setActiveGenerationSource] = useState<StoredSource | null>(null);
   const [mode, setMode] = useState<ComposerMode>("prompt");
+  const [slideCount, setSlideCount] = useState(10);
+  const [themeId, setThemeId] = useState<ThemeId>("editorial-cobalt");
   const [title, setTitle] = useState("");
   const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [cancelingJobId, setCancelingJobId] = useState<string | null>(null);
+  const [renamingPresentationId, setRenamingPresentationId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const [presentationActionId, setPresentationActionId] = useState<string | null>(null);
   const [jobs, setJobs] = useState<Record<string, GenerationJob>>({});
   const fileInput = useRef<HTMLInputElement>(null);
+  const pollTimer = useRef<number | null>(null);
+  const pollingJobId = useRef<string | null>(null);
 
   useEffect(() => {
     Promise.all([
       apiFetch<CurrentUser>("/v1/auth/me"),
-      apiFetch<StoredSource[]>("/v1/sources"),
+      apiFetch<StoredPresentation[]>("/v1/presentations"),
+      apiFetch<GenerationJob[]>("/v1/jobs?limit=20"),
     ])
-      .then(([currentUser, currentSources]) => {
+      .then(async ([currentUser, currentPresentations, recentJobs]) => {
         setUser(currentUser);
-        setSources(currentSources);
+        setPresentations(currentPresentations);
+        const latestActive = recentJobs.find(
+          (job) => job.status === "queued" || job.status === "running",
+        );
+        const latest = latestActive
+          ?? (["failed", "canceled"].includes(recentJobs[0]?.status ?? "") ? recentJobs[0] : undefined);
+        if (
+          !latest?.source_id
+          || !["queued", "running", "failed", "canceled"].includes(latest.status)
+        ) return;
+        try {
+          const source = await apiFetch<StoredSource>(`/v1/sources/${latest.source_id}`);
+          setActiveGenerationSource(source);
+          setJobs((current) => ({ ...current, [source.id]: latest }));
+          if (latest.status === "queued" || latest.status === "running") {
+            trackJob(source.id, latest.id);
+          }
+        } catch {
+          // Expired terminal-job sources are intentionally omitted from recovery.
+        }
       })
       .catch((caught) => {
         if (caught instanceof ApiError && caught.status === 401) {
@@ -58,6 +88,11 @@ export function Dashboard() {
         setError("The API is unavailable. Confirm FastAPI and PostgreSQL are running.");
       })
       .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => () => {
+    pollingJobId.current = null;
+    if (pollTimer.current !== null) window.clearTimeout(pollTimer.current);
   }, []);
 
   async function createTextSource(event: FormEvent<HTMLFormElement>) {
@@ -73,9 +108,9 @@ export function Dashboard() {
           text,
         }),
       });
-      setSources((current) => [source, ...current]);
       setTitle("");
       setText("");
+      await startGeneration(source, slideCount, themeId);
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : "Could not create the source.");
     } finally {
@@ -93,7 +128,7 @@ export function Dashboard() {
         method: "POST",
         body,
       });
-      setSources((current) => [source, ...current]);
+      await startGeneration(source, slideCount, themeId);
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : "Could not upload the document.");
     } finally {
@@ -108,38 +143,132 @@ export function Dashboard() {
   }
 
   async function pollJob(sourceId: string, jobId: string) {
+    if (pollingJobId.current !== jobId) return;
     try {
       const job = await apiFetch<GenerationJob>(`/v1/jobs/${jobId}`);
+      if (pollingJobId.current !== jobId) return;
       setJobs((current) => ({ ...current, [sourceId]: job }));
       if (job.status === "succeeded" && job.result?.presentation_id) {
+        pollingJobId.current = null;
         window.location.assign(`/editor?presentation=${job.result.presentation_id}`);
         return;
       }
       if (job.status === "queued" || job.status === "running") {
-        window.setTimeout(() => void pollJob(sourceId, jobId), 1000);
+        pollTimer.current = window.setTimeout(() => void pollJob(sourceId, jobId), 1000);
+      } else {
+        pollingJobId.current = null;
       }
     } catch (caught) {
+      if (pollingJobId.current !== jobId) return;
       setError(caught instanceof ApiError ? caught.message : "Could not read generation progress.");
+      pollTimer.current = window.setTimeout(() => void pollJob(sourceId, jobId), 2000);
     }
   }
 
-  async function generate(source: StoredSource) {
+  function trackJob(sourceId: string, jobId: string) {
+    pollingJobId.current = jobId;
+    if (pollTimer.current !== null) window.clearTimeout(pollTimer.current);
+    void pollJob(sourceId, jobId);
+  }
+
+  async function startGeneration(
+    source: StoredSource,
+    requestedSlideCount = 10,
+    requestedThemeId: ThemeId = themeId,
+  ) {
     setError(null);
+    setStartingSourceId(source.id);
+    setActiveGenerationSource(source);
     try {
       const job = await apiFetch<GenerationJob>("/v1/generations", {
         method: "POST",
         body: JSON.stringify({
           source_id: source.id,
-          slide_count: 10,
+          slide_count: requestedSlideCount,
           language: navigator.language.toLowerCase().startsWith("vi") ? "vi" : "en",
+          theme_id: requestedThemeId,
         }),
       });
       setJobs((current) => ({ ...current, [source.id]: job }));
-      void pollJob(source.id, job.id);
+      trackJob(source.id, job.id);
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : "Could not start generation.");
+    } finally {
+      setStartingSourceId(null);
     }
   }
+
+  async function cancelGeneration(sourceId: string, jobId: string) {
+    setCancelingJobId(jobId);
+    setError(null);
+    try {
+      const job = await apiFetch<GenerationJob>(`/v1/jobs/${jobId}/cancel`, {
+        method: "POST",
+      });
+      pollingJobId.current = null;
+      if (pollTimer.current !== null) window.clearTimeout(pollTimer.current);
+      setJobs((current) => ({ ...current, [sourceId]: job }));
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : "Could not cancel generation.");
+    } finally {
+      setCancelingJobId(null);
+    }
+  }
+
+  async function renamePresentation(
+    event: FormEvent<HTMLFormElement>,
+    presentation: StoredPresentation,
+  ) {
+    event.preventDefault();
+    const nextTitle = renameDraft.trim();
+    if (!nextTitle) return;
+    setPresentationActionId(presentation.id);
+    setError(null);
+    try {
+      const renamed = await apiFetch<StoredPresentation>(
+        `/v1/presentations/${presentation.id}/title`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            expected_revision: presentation.revision,
+            title: nextTitle,
+          }),
+        },
+      );
+      setPresentations((current) => current.map((item) => (
+        item.id === renamed.id ? renamed : item
+      )));
+      setRenamingPresentationId(null);
+      setRenameDraft("");
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : "Could not rename the presentation.");
+    } finally {
+      setPresentationActionId(null);
+    }
+  }
+
+  async function deletePresentation(presentation: StoredPresentation) {
+    if (!window.confirm(`Delete “${presentation.title}”? This cannot be undone.`)) return;
+    setPresentationActionId(presentation.id);
+    setError(null);
+    try {
+      await apiFetch<void>(
+        `/v1/presentations/${presentation.id}?expected_revision=${presentation.revision}`,
+        { method: "DELETE" },
+      );
+      setPresentations((current) => current.filter((item) => item.id !== presentation.id));
+      if (renamingPresentationId === presentation.id) {
+        setRenamingPresentationId(null);
+        setRenameDraft("");
+      }
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : "Could not delete the presentation.");
+    } finally {
+      setPresentationActionId(null);
+    }
+  }
+
+  const activeGenerationJob = activeGenerationSource ? jobs[activeGenerationSource.id] : undefined;
 
   if (loading) {
     return <main className="dashboard-loading">Loading your workspace…</main>;
@@ -185,14 +314,35 @@ export function Dashboard() {
                 id="source-file"
                 type="file"
                 accept=".docx,.pptx,.pdf"
+                disabled={submitting}
                 onChange={(event) => {
                   const file = event.target.files?.[0];
                   if (file) void uploadFile(file);
                 }}
               />
               <label className="button button--primary" htmlFor="source-file">
-                <UploadSimple size={17} /> {submitting ? "Uploading…" : "Choose a file"}
+                <UploadSimple size={17} /> {submitting ? "Working…" : "Choose file & generate"}
               </label>
+              <div className="composer-options composer-options--upload">
+                <label className="slide-count-field">
+                  <span>Slides</span>
+                  <input type="number" min="1" max="30" value={slideCount} onChange={(event) => setSlideCount(Math.min(30, Math.max(1, Number(event.target.value) || 1)))} />
+                </label>
+              </div>
+              <fieldset className="theme-picker theme-picker--upload">
+                <legend>Visual theme</legend>
+                <div>
+                  {themes.map((theme) => (
+                    <label className={themeId === theme.id ? "is-selected" : ""} key={theme.id}>
+                      <input type="radio" name="upload-theme" value={theme.id} checked={themeId === theme.id} onChange={() => setThemeId(theme.id)} />
+                      <span className="theme-swatches" aria-hidden="true">
+                        {theme.colors.map((color) => <i style={{ background: color }} key={color} />)}
+                      </span>
+                      <span>{theme.name}</span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
             </div>
           ) : (
             <form className="composer-form" onSubmit={createTextSource}>
@@ -214,10 +364,30 @@ export function Dashboard() {
                 onChange={(event) => setText(event.target.value)}
                 required
               />
+              <div className="composer-options">
+                <label className="slide-count-field">
+                  <span>Slides</span>
+                  <input type="number" min="1" max="30" value={slideCount} onChange={(event) => setSlideCount(Math.min(30, Math.max(1, Number(event.target.value) || 1)))} />
+                </label>
+              </div>
+              <fieldset className="theme-picker">
+                <legend>Visual theme</legend>
+                <div>
+                  {themes.map((theme) => (
+                    <label className={themeId === theme.id ? "is-selected" : ""} key={theme.id}>
+                      <input type="radio" name="theme" value={theme.id} checked={themeId === theme.id} onChange={() => setThemeId(theme.id)} />
+                      <span className="theme-swatches" aria-hidden="true">
+                        {theme.colors.map((color) => <i style={{ background: color }} key={color} />)}
+                      </span>
+                      <span>{theme.name}</span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
               <div className="composer-actions">
-                <span>{mode === "prompt" ? "The AI generation step will use this context." : "Headings will guide the slide outline."}</span>
+                <span>You will go straight to the editable presentation.</span>
                 <button className="button button--primary" type="submit" disabled={submitting || !text.trim()}>
-                  <Plus size={17} /> {submitting ? "Saving…" : "Save source"}
+                  <MagicWand size={17} /> {submitting ? "Working…" : "Generate presentation"}
                 </button>
               </div>
             </form>
@@ -225,47 +395,130 @@ export function Dashboard() {
           {error ? <p className="dashboard-error" role="alert">{error}</p> : null}
         </section>
 
-        <section className="source-section">
+        {activeGenerationSource ? (
+          <section className={`generation-banner${activeGenerationJob?.status === "failed" ? " generation-banner--failed" : ""}${activeGenerationJob?.status === "canceled" ? " generation-banner--canceled" : ""}`} aria-live="polite">
+            <span className="generation-banner__icon"><MagicWand size={20} /></span>
+            <div className="generation-banner__content">
+              <strong>
+                {activeGenerationJob?.status === "failed"
+                  ? "Generation failed"
+                  : activeGenerationJob?.status === "canceled"
+                    ? "Generation canceled"
+                    : `Building “${activeGenerationSource.title}”`}
+              </strong>
+              <p>
+                {startingSourceId === activeGenerationSource.id || activeGenerationJob?.status === "queued"
+                  ? "Queued — preparing your source…"
+                  : activeGenerationJob?.status === "running"
+                    ? `Creating the story and editable slides… ${activeGenerationJob.progress}%`
+                    : activeGenerationJob?.status === "failed"
+                      ? activeGenerationJob.error_message || "The presentation could not be generated."
+                      : activeGenerationJob?.status === "canceled"
+                        ? "No presentation was saved from this job."
+                        : "Starting generation…"}
+              </p>
+              {activeGenerationJob?.status === "queued" || activeGenerationJob?.status === "running" ? (
+                <div
+                  className="generation-progress"
+                  role="progressbar"
+                  aria-label="Presentation generation progress"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={activeGenerationJob.progress}
+                >
+                  <span style={{ width: `${activeGenerationJob.progress}%` }} />
+                </div>
+              ) : null}
+            </div>
+            {activeGenerationJob?.status === "failed" || activeGenerationJob?.status === "canceled" ? (
+              <button className="button" onClick={() => void startGeneration(activeGenerationSource, slideCount)}>Retry</button>
+            ) : activeGenerationJob?.status === "queued" || activeGenerationJob?.status === "running" ? (
+              <button
+                className="button generation-cancel"
+                disabled={cancelingJobId === activeGenerationJob.id}
+                onClick={() => void cancelGeneration(activeGenerationSource.id, activeGenerationJob.id)}
+              >
+                {cancelingJobId === activeGenerationJob.id ? "Canceling…" : "Cancel"}
+              </button>
+            ) : <span className="generation-pulse" aria-hidden="true" />}
+          </section>
+        ) : null}
+
+        <section className="presentation-section">
           <div className="section-heading">
-            <div><p className="eyebrow">Your content</p><h2>Recent sources</h2></div>
-            <span>{sources.length} item{sources.length === 1 ? "" : "s"}</span>
+            <div><p className="eyebrow">Your decks</p><h2>Recent presentations</h2></div>
+            <span>{presentations.length} deck{presentations.length === 1 ? "" : "s"}</span>
           </div>
-          {sources.length === 0 ? (
-            <div className="source-empty">
-              <MagicWand size={24} />
-              <h3>No sources yet</h3>
-              <p>Save a prompt, paste your content, or upload a document to begin.</p>
+          {presentations.length === 0 ? (
+            <div className="presentation-empty">
+              Generated presentations will appear here so you can reopen and continue editing them.
             </div>
           ) : (
-            <div className="source-list">
-              {sources.map((source) => (
-                <article className="source-row" key={source.id}>
-                  <div className="source-row__icon">{sourceIcon(source.kind)}</div>
-                  <div className="source-row__body">
-                    <div><span className="source-kind">{source.kind}</span>{source.requires_ocr ? <span className="source-warning">OCR required</span> : null}</div>
-                    <h3>{source.title}</h3>
-                    <p>{source.extracted_text || "No extractable text found."}</p>
-                  </div>
-                  <button
-                    className="source-open"
-                    type="button"
-                    disabled={jobs[source.id]?.status === "queued" || jobs[source.id]?.status === "running"}
-                    onClick={() => void generate(source)}
-                  >
-                    {jobs[source.id]?.status === "queued"
-                      ? "Queued"
-                      : jobs[source.id]?.status === "running"
-                        ? `Generating ${jobs[source.id]?.progress}%`
-                        : jobs[source.id]?.status === "failed"
-                          ? "Retry"
-                          : "Generate"}
-                    <ArrowRight size={16} />
-                  </button>
-                </article>
-              ))}
+            <div className="presentation-strip">
+              {presentations.map((presentation) => {
+                const candidate = presentation.document as { slides?: unknown[] } | null;
+                const count = Array.isArray(candidate?.slides) ? candidate.slides.length : 0;
+                return (
+                  <article className="presentation-item" key={presentation.id}>
+                    {renamingPresentationId === presentation.id ? (
+                      <form className="presentation-rename" onSubmit={(event) => void renamePresentation(event, presentation)}>
+                        <label htmlFor={`rename-${presentation.id}`}>Presentation name</label>
+                        <input
+                          id={`rename-${presentation.id}`}
+                          value={renameDraft}
+                          maxLength={500}
+                          autoFocus
+                          onChange={(event) => setRenameDraft(event.target.value)}
+                        />
+                        <div>
+                          <button className="button button--primary" type="submit" disabled={!renameDraft.trim() || presentationActionId === presentation.id}>
+                            {presentationActionId === presentation.id ? "Saving…" : "Save"}
+                          </button>
+                          <button className="button" type="button" disabled={presentationActionId === presentation.id} onClick={() => setRenamingPresentationId(null)}>Cancel</button>
+                        </div>
+                      </form>
+                    ) : (
+                      <>
+                        <a className="presentation-item__open" href={`/editor?presentation=${presentation.id}`}>
+                          <span className="presentation-item__preview"><FilePpt size={24} /></span>
+                          <span className="presentation-item__copy">
+                            <strong>{presentation.title}</strong>
+                            <small>{count} slide{count === 1 ? "" : "s"}</small>
+                          </span>
+                          <ArrowRight size={16} />
+                        </a>
+                        <div className="presentation-item__actions">
+                          <button
+                            type="button"
+                            aria-label={`Rename ${presentation.title}`}
+                            title="Rename"
+                            disabled={presentationActionId === presentation.id}
+                            onClick={() => {
+                              setRenamingPresentationId(presentation.id);
+                              setRenameDraft(presentation.title);
+                            }}
+                          >
+                            <PencilSimple size={15} />
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`Delete ${presentation.title}`}
+                            title="Delete"
+                            disabled={presentationActionId === presentation.id}
+                            onClick={() => void deletePresentation(presentation)}
+                          >
+                            <Trash size={15} />
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </article>
+                );
+              })}
             </div>
           )}
         </section>
+
       </div>
     </main>
   );

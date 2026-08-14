@@ -28,6 +28,12 @@ describe("presentation schema", () => {
     expect(result.success).toBe(false);
   });
 
+  it("rejects a presentation without slides", () => {
+    expect(
+      presentationSchema.safeParse({ ...canonicalPresentationFixture, slides: [] }).success,
+    ).toBe(false);
+  });
+
   it("rejects an invalid image without a server-owned asset id", () => {
     const result = presentationSchema.safeParse({
       ...canonicalPresentationFixture,

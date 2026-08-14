@@ -1,13 +1,14 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=None,
+        env_file=".env",
+        env_file_encoding="utf-8",
         env_prefix="SLIDEGEN_",
         extra="ignore",
     )
@@ -19,7 +20,14 @@ class Settings(BaseSettings):
     generation_concurrency: int = Field(default=2, ge=1, le=16)
     session_ttl_hours: int = Field(default=168, ge=1, le=24 * 90)
     source_retention_hours: int = Field(default=24, ge=1, le=24 * 365)
+    retention_cleanup_interval_seconds: int = Field(default=300, ge=10, le=24 * 60 * 60)
+    retention_cleanup_batch_size: int = Field(default=100, ge=1, le=1_000)
     generation_provider: str = "stub"
+    image_provider: str = "disabled"
+    google_api_key: SecretStr | None = None
+    google_model: str | None = None
+    google_image_model: str | None = None
+    google_max_input_chars: int = Field(default=120_000, ge=1_000, le=2_000_000)
 
 
 @lru_cache

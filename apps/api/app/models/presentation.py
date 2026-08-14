@@ -18,6 +18,9 @@ class PresentationRecord(Base):
     source_id: Mapped[UUID | None] = mapped_column(
         PostgresUUID(as_uuid=True), ForeignKey("source_records.id", ondelete="SET NULL"), index=True
     )
+    outline_id: Mapped[UUID | None] = mapped_column(
+        PostgresUUID(as_uuid=True), ForeignKey("outlines.id", ondelete="SET NULL"), index=True
+    )
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     document: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
     revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

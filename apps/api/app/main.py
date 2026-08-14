@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 from .config import get_settings
 from .auth import get_current_user, router as auth_router
+from .assets import router as assets_router
 from .ingestion import InvalidDocumentError, SourceDocument, UnsupportedDocumentError, extract_document
 from .generation import router as generation_router
 from .models import User
@@ -12,6 +13,7 @@ from .sources import router as sources_router
 
 app = FastAPI(title="Gapo SlideGen API", version="0.1.0")
 app.include_router(auth_router)
+app.include_router(assets_router)
 app.include_router(sources_router)
 app.include_router(generation_router)
 

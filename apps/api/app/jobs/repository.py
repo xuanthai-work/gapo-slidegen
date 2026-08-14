@@ -43,6 +43,28 @@ def build_claim_query(job_type: JobType | None = None) -> Select[tuple[Generatio
     return statement.where(GenerationJob.job_type == job_type) if job_type else statement
 
 
+def build_owned_job_query(job_id: UUID, owner_id: UUID) -> Select[tuple[GenerationJob]]:
+    return select(GenerationJob).where(
+        GenerationJob.id == job_id,
+        GenerationJob.owner_id == owner_id,
+    )
+
+
+def build_owned_jobs_query(
+    owner_id: UUID,
+    *,
+    job_type: JobType | None = None,
+    limit: int = 20,
+) -> Select[tuple[GenerationJob]]:
+    statement = (
+        select(GenerationJob)
+        .where(GenerationJob.owner_id == owner_id)
+        .order_by(GenerationJob.created_at.desc(), GenerationJob.id.desc())
+        .limit(limit)
+    )
+    return statement.where(GenerationJob.job_type == job_type) if job_type else statement
+
+
 class JobRepository:
     def __init__(self, session: Session) -> None:
         self.session = session
@@ -70,10 +92,18 @@ class JobRepository:
         return job
 
     def get_owned(self, job_id: UUID, owner_id: UUID) -> GenerationJob | None:
-        return self.session.scalar(
-            select(GenerationJob).where(
-                GenerationJob.id == job_id,
-                GenerationJob.owner_id == owner_id,
+        return self.session.scalar(build_owned_job_query(job_id, owner_id))
+
+    def list_owned(
+        self,
+        owner_id: UUID,
+        *,
+        job_type: JobType | None = None,
+        limit: int = 20,
+    ) -> list[GenerationJob]:
+        return list(
+            self.session.scalars(
+                build_owned_jobs_query(owner_id, job_type=job_type, limit=limit)
             )
         )
 
@@ -82,6 +112,7 @@ class JobRepository:
         if job is None:
             return None
         transition(job, JobStatus.RUNNING)
+        job.progress = 10
         self.session.flush()
         return job
 

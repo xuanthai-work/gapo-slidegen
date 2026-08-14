@@ -55,4 +55,31 @@ describe("structured edit operations", () => {
       }),
     ).toThrow(EditOperationError);
   });
+
+  it("moves a top-level element to a deterministic layer index", () => {
+    const elements = canonicalPresentationFixture.slides[0]?.elements;
+    if (!elements || elements.length < 2) throw new Error("Fixture needs multiple elements");
+    const firstId = elements[0]!.id;
+
+    const next = applyEditOperation(canonicalPresentationFixture, {
+      operationId: "operation-layer",
+      type: "move-element",
+      slideId: "slide-title",
+      elementId: firstId,
+      index: elements.length - 1,
+    });
+
+    expect(next.slides[0]?.elements.at(-1)?.id).toBe(firstId);
+    expect(next.slides[0]?.revision).toBe(1);
+  });
+
+  it("does not remove the final slide", () => {
+    expect(() =>
+      applyEditOperation(canonicalPresentationFixture, {
+        operationId: "operation-4",
+        type: "remove-slide",
+        slideId: "slide-title",
+      }),
+    ).toThrow("at least one slide");
+  });
 });

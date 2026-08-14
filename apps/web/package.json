@@ -9,6 +9,7 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@gapo-slidegen/pptx-exporter": "0.1.0",
     "@gapo-slidegen/slide-editor": "0.1.0",
     "@gapo-slidegen/slide-schema": "0.1.0",
     "@phosphor-icons/react": "2.1.10",

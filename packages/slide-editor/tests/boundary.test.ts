@@ -29,4 +29,26 @@ describe("editor product boundary", () => {
       () => new EditorBoundary({ initialDocument: { id: "broken" }, onChange: vi.fn() }),
     ).toThrow();
   });
+
+  it("undoes and redoes edits through the persistence callback", () => {
+    const onChange = vi.fn();
+    const editor = new EditorBoundary({
+      initialDocument: canonicalPresentationFixture,
+      onChange,
+    });
+    const title = editor.document.slides[0]?.elements[0];
+    if (!title || title.type !== "text") throw new Error("Fixture title is missing");
+
+    editor.apply({
+      operationId: "edit-before-undo",
+      type: "upsert-element",
+      slideId: "slide-title",
+      element: { ...title, runs: [{ text: "Changed" }] },
+    });
+    expect(editor.canUndo).toBe(true);
+    expect(editor.undo()?.slides[0]?.elements[0]).toMatchObject({ runs: [{ text: "Quarterly product review" }] });
+    expect(editor.canRedo).toBe(true);
+    expect(editor.redo()?.slides[0]?.elements[0]).toMatchObject({ runs: [{ text: "Changed" }] });
+    expect(onChange).toHaveBeenCalledTimes(3);
+  });
 });

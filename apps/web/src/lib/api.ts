@@ -33,6 +33,13 @@ export type StoredPresentation = {
   revision: number;
 };
 
+export type StoredAsset = {
+  id: string;
+  filename: string;
+  content_type: "image/png" | "image/jpeg" | "image/webp";
+  size: number;
+};
+
 export class ApiError extends Error {
   constructor(
     message: string,
