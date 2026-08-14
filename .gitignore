@@ -1,0 +1,42 @@
+# JavaScript
+node_modules/
+.next/
+out/
+coverage/
+.runlogs/
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+.uv-cache/
+dist/
+*.egg-info/
+
+# Environment and secrets
+.env
+.env.local
+.env.development
+.env.production
+!.env.example
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Generated exports
+exports/
+
+# Local application data
+.data/
+storage/
+
+# Test output
+test-results/
+playwright-report/

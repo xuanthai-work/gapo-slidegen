@@ -1,0 +1,24 @@
+{
+  "name": "@gapo-slidegen/web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "next build",
+    "dev": "next dev",
+    "start": "next start",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@gapo-slidegen/slide-editor": "0.1.0",
+    "@gapo-slidegen/slide-schema": "0.1.0",
+    "@phosphor-icons/react": "2.1.10",
+    "next": "16.3.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@types/node": "26.2.0",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4"
+  }
+}

@@ -1,0 +1,24 @@
+Gapo SlideGen
+
+This product includes software derived from Presenton, licensed under the
+Apache License 2.0. The exact upstream revisions and modified files are listed
+under docs/provenance/.
+
+Presenton
+Copyright Presenton contributors
+https://github.com/presenton/presenton
+
+This product may include software derived from Presentation AI by ALLWEONE,
+licensed under the MIT License. Such code is only included when its provenance
+record names the exact source files and upstream revision.
+
+Presentation AI
+Copyright (c) 2024 ALLWEONE Team
+https://github.com/allweonedev/presentation-ai
+
+Third-party notices and license texts are provided in LICENSES/.
+
+PptxGenJS
+Copyright (c) 2015-present Brent Ely
+https://github.com/gitbrent/PptxGenJS
+Licensed under the MIT License.
