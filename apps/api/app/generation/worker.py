@@ -63,7 +63,7 @@ class GenerationWorker:
                 slide_count=int(job.payload.get("slide_count", 10)),
                 language=str(job.payload.get("language", "en")),
                 source_kind=source.kind if source else "outline",
-                theme_id=str(job.payload.get("theme_id", "editorial-cobalt")),
+                theme_id=str(job.payload.get("theme_id", "modern-blue")),
             )
             session.commit()
             return claimed

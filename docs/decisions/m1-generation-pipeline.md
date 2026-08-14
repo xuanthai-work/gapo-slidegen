@@ -23,13 +23,16 @@ are not called by the web product.
 All job and presentation reads filter by the authenticated owner. The maximum
 slide count remains 30 at both the API and canonical schema boundaries.
 
-Generation jobs also snapshot a validated theme id. The first theme catalog is
-intentionally bounded to Editorial Cobalt, Warm Studio, and Midnight Signal.
-Each theme owns a distinct cover composition, typography, palette, and ordering
-of six native text/shape layout archetypes. Long content selects the larger
-reading layout, while title and body sizes adapt within bounded geometry. This
-adds useful visual variation without asking the model to invent fragile canvas
-geometry; all output remains editable and exportable through the shared schema.
+Generation jobs also snapshot a validated theme id. Modern Blue is the default
+and is compiled from the pinned Presenton Modern template artifact;
+Editorial Cobalt, Warm Studio, and Midnight Signal remain compatibility
+fallbacks for existing decks.
+Modern Blue cycles through six upstream content layouts compatible with the
+current text-only story plan. Its nested Presenton component tree is flattened
+to editable canonical text and shape objects while retaining component/slot
+metadata. Chart and table layouts remain excluded from automatic selection
+until the story plan provides structured data. The three compatibility themes
+continue to use their six product-owned native layout archetypes.
 
 ## Provider boundary
 

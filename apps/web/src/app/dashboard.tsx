@@ -21,9 +21,10 @@ import {
 } from "../lib/api";
 
 type ComposerMode = "prompt" | "manuscript" | "file";
-type ThemeId = "editorial-cobalt" | "warm-studio" | "midnight-signal";
+type ThemeId = "modern-blue" | "editorial-cobalt" | "warm-studio" | "midnight-signal";
 
 const themes: Array<{ id: ThemeId; name: string; colors: [string, string, string] }> = [
+  { id: "modern-blue", name: "Modern Blue", colors: ["#FFFFFF", "#1E4CD9", "#F5F8FE"] },
   { id: "editorial-cobalt", name: "Editorial", colors: ["#172033", "#285FC7", "#E3AA45"] },
   { id: "warm-studio", name: "Warm Studio", colors: ["#2E2925", "#C45132", "#D9A441"] },
   { id: "midnight-signal", name: "Midnight", colors: ["#09111F", "#4F86F7", "#F4B860"] },
@@ -36,7 +37,7 @@ export function Dashboard() {
   const [activeGenerationSource, setActiveGenerationSource] = useState<StoredSource | null>(null);
   const [mode, setMode] = useState<ComposerMode>("prompt");
   const [slideCount, setSlideCount] = useState(10);
-  const [themeId, setThemeId] = useState<ThemeId>("editorial-cobalt");
+  const [themeId, setThemeId] = useState<ThemeId>("modern-blue");
   const [title, setTitle] = useState("");
   const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);

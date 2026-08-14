@@ -2,6 +2,20 @@ from typing import Final
 
 
 THEMES: Final[dict[str, dict[str, object]]] = {
+    "modern-blue": {
+        "id": "modern-blue",
+        "name": "Modern Blue",
+        "colors": {
+            "background": "#FFFFFF",
+            "surface": "#F5F8FE",
+            "primary": "#1E4CD9",
+            "secondary": "#234CD9",
+            "accent": "#1E4CD9",
+            "text": "#334155",
+            "muted": "#64748B",
+        },
+        "fonts": {"heading": "Montserrat", "body": "Montserrat"},
+    },
     "editorial-cobalt": {
         "id": "editorial-cobalt",
         "name": "Editorial Cobalt",
@@ -46,7 +60,7 @@ THEMES: Final[dict[str, dict[str, object]]] = {
     },
 }
 
-DEFAULT_THEME_ID: Final = "editorial-cobalt"
+DEFAULT_THEME_ID: Final = "modern-blue"
 
 
 def get_theme(theme_id: str) -> dict[str, object]:

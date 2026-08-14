@@ -3,6 +3,7 @@
 import type Konva from "konva";
 import type { KonvaEventObject } from "konva/lib/Node";
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Ellipse, Image as KonvaImage, Layer, Line, Rect, Shape as KonvaShape, Stage, Text, Transformer } from "react-konva";
 import {
   EDITOR_STAGE_HEIGHT,
@@ -21,6 +22,14 @@ export type SlideCanvasProps = {
   resolveAssetUrl?: (assetId: string) => string;
 };
 
+type TextElement = Extract<SlideElement, { type: "text" }>;
+
+type InlineTextEdit = {
+  element: TextElement;
+  clientX: number;
+  clientY: number;
+};
+
 function elementFill(element: ShapeElement): string {
   return element.fill?.color ?? "transparent";
 }
@@ -30,6 +39,8 @@ function ElementNode({
   onSelect,
   onChange,
   registerNode,
+  editingElementId,
+  onBeginTextEdit,
   readOnly = false,
   resolveAssetUrl,
 }: {
@@ -37,6 +48,8 @@ function ElementNode({
   onSelect: () => void;
   onChange: (element: SlideElement) => void;
   registerNode: (id: string, node: Konva.Node | null) => void;
+  editingElementId: string | null;
+  onBeginTextEdit: (element: TextElement, clientX: number, clientY: number) => void;
   readOnly?: boolean;
   resolveAssetUrl?: (assetId: string) => string;
 }) {
@@ -65,7 +78,7 @@ function ElementNode({
     height: element.size.height,
     rotation: element.rotation,
     opacity: element.opacity,
-    draggable: !readOnly && !element.locked,
+    draggable: !readOnly && !element.locked && editingElementId !== element.id,
     listening: !readOnly,
     ...(readOnly ? {} : { onClick: onSelect, onTap: onSelect }),
     onDragEnd: (event: KonvaEventObject<DragEvent>) => {
@@ -98,6 +111,15 @@ function ElementNode({
     return (
       <Text
         {...common}
+        visible={editingElementId !== element.id}
+        onDblClick={(event) => {
+          onSelect();
+          onBeginTextEdit(element, event.evt.clientX, event.evt.clientY);
+        }}
+        onDblTap={() => {
+          onSelect();
+          onBeginTextEdit(element, 0, 0);
+        }}
         text={text}
         fill={element.font?.color ?? "#172033"}
         fontFamily={element.font?.family ?? "Arial"}
@@ -226,7 +248,9 @@ export function SlideCanvas({
   const hostRef = useRef<HTMLDivElement>(null);
   const transformerRef = useRef<Konva.Transformer>(null);
   const nodesRef = useRef(new Map<string, Konva.Node>());
+  const inlineEditorRef = useRef<HTMLDivElement>(null);
   const [hostWidth, setHostWidth] = useState<number>(EDITOR_STAGE_WIDTH);
+  const [inlineEdit, setInlineEdit] = useState<InlineTextEdit | null>(null);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -241,20 +265,83 @@ export function SlideCanvas({
   useEffect(() => {
     const transformer = transformerRef.current;
     if (!transformer || readOnly) return;
-    const selectedNode = selectedElementId
+    const selectedNode = selectedElementId && selectedElementId !== inlineEdit?.element.id
       ? nodesRef.current.get(selectedElementId)
       : undefined;
     transformer.nodes(selectedNode ? [selectedNode] : []);
     transformer.getLayer()?.batchDraw();
-  }, [selectedElementId, elements, readOnly]);
+  }, [selectedElementId, elements, inlineEdit?.element.id, readOnly]);
 
   const scale = useMemo(
     () => Math.min(1, Math.max(0.1, hostWidth / EDITOR_STAGE_WIDTH)),
     [hostWidth],
   );
 
+  useEffect(() => {
+    const editor = inlineEditorRef.current;
+    if (!editor || !inlineEdit) return;
+    editor.focus();
+
+    const selection = window.getSelection();
+    if (!selection) return;
+    const rangeFromPoint = (
+      document as Document & {
+        caretRangeFromPoint?: (x: number, y: number) => Range | null;
+      }
+    ).caretRangeFromPoint?.(inlineEdit.clientX, inlineEdit.clientY);
+    const caretPosition = document.caretPositionFromPoint?.(
+      inlineEdit.clientX,
+      inlineEdit.clientY,
+    );
+    const range = rangeFromPoint ?? (() => {
+      if (!caretPosition) return null;
+      const nextRange = document.createRange();
+      nextRange.setStart(caretPosition.offsetNode, caretPosition.offset);
+      nextRange.collapse(true);
+      return nextRange;
+    })();
+
+    selection.removeAllRanges();
+    if (range && editor.contains(range.startContainer)) {
+      selection.addRange(range);
+      return;
+    }
+    const fallback = document.createRange();
+    fallback.selectNodeContents(editor);
+    fallback.collapse(false);
+    selection.addRange(fallback);
+  }, [inlineEdit?.element.id]);
+
+  useEffect(() => {
+    if (inlineEdit && !elements.some((element) => element.id === inlineEdit.element.id)) {
+      setInlineEdit(null);
+    }
+  }, [elements, inlineEdit]);
+
+  function commitInlineEdit(value: string) {
+    if (!inlineEdit) return;
+    const normalized = value.replace(/\r\n/g, "\n");
+    const original = inlineEdit.element.runs.map((run) => run.text).join("");
+    if (normalized !== original) {
+      const runFont = inlineEdit.element.runs[0]?.font;
+      onChangeElement({
+        ...inlineEdit.element,
+        runs: [{ text: normalized, ...(runFont ? { font: runFont } : {}) }],
+      });
+    }
+    setInlineEdit(null);
+  }
+
+  function handleInlineKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    event.stopPropagation();
+    if (event.key === "Escape" || ((event.ctrlKey || event.metaKey) && event.key === "Enter")) {
+      event.preventDefault();
+      event.currentTarget.blur();
+    }
+  }
+
   return (
-    <div ref={hostRef} style={{ width: "100%" }}>
+    <div ref={hostRef} style={{ width: "100%", position: "relative" }}>
       <Stage
         width={EDITOR_STAGE_WIDTH * scale}
         height={EDITOR_STAGE_HEIGHT * scale}
@@ -277,6 +364,10 @@ export function SlideCanvas({
               element={element}
               onSelect={() => onSelectElement(element.id)}
               onChange={onChangeElement}
+              editingElementId={inlineEdit?.element.id ?? null}
+              onBeginTextEdit={(textElement, clientX, clientY) => {
+                setInlineEdit({ element: textElement, clientX, clientY });
+              }}
               readOnly={readOnly}
               {...(resolveAssetUrl ? { resolveAssetUrl } : {})}
               registerNode={(id, node) => {
@@ -301,6 +392,81 @@ export function SlideCanvas({
           ) : null}
         </Layer>
       </Stage>
+      {inlineEdit ? (
+        <div
+          style={{
+            position: "absolute",
+            left: inlineEdit.element.position.x * scale,
+            top: inlineEdit.element.position.y * scale,
+            width: inlineEdit.element.size.width * scale,
+            height: inlineEdit.element.size.height * scale,
+            display: "flex",
+            alignItems: inlineEdit.element.verticalAlign === "middle"
+              ? "center"
+              : inlineEdit.element.verticalAlign === "bottom"
+                ? "flex-end"
+                : "flex-start",
+            boxSizing: "border-box",
+            outline: `${Math.max(1, 2 * scale)}px solid #285FC7`,
+            outlineOffset: Math.max(1, 2 * scale),
+            background: "transparent",
+            transform: `rotate(${inlineEdit.element.rotation}deg)`,
+            transformOrigin: "top left",
+            zIndex: 2,
+          }}
+        >
+          <div
+            ref={inlineEditorRef}
+            role="textbox"
+            aria-label="Edit text on slide"
+            aria-multiline="true"
+            contentEditable
+            suppressContentEditableWarning
+            onKeyDown={handleInlineKeyDown}
+            onBlur={(event) => commitInlineEdit(event.currentTarget.innerText)}
+            onPaste={(event) => {
+              event.preventDefault();
+              const selection = window.getSelection();
+              if (!selection?.rangeCount) return;
+              const range = selection.getRangeAt(0);
+              if (!event.currentTarget.contains(range.commonAncestorContainer)) return;
+              range.deleteContents();
+              const pastedText = document.createTextNode(
+                event.clipboardData.getData("text/plain"),
+              );
+              range.insertNode(pastedText);
+              range.setStartAfter(pastedText);
+              range.collapse(true);
+              selection.removeAllRanges();
+              selection.addRange(range);
+            }}
+            style={{
+              width: "100%",
+              maxHeight: "100%",
+              color: inlineEdit.element.font?.color ?? "#172033",
+              fontFamily: inlineEdit.element.font?.family ?? "Arial",
+              fontSize: (inlineEdit.element.font?.size ?? 54) * scale,
+              fontWeight: inlineEdit.element.font?.bold ? 700 : 400,
+              fontStyle: inlineEdit.element.font?.italic ? "italic" : "normal",
+              lineHeight: inlineEdit.element.font?.lineHeight ?? 1.15,
+              letterSpacing: (inlineEdit.element.font?.letterSpacing ?? 0) * scale,
+              textAlign: inlineEdit.element.horizontalAlign,
+              whiteSpace: "pre-wrap",
+              overflow: "hidden",
+              overflowWrap: "break-word",
+              boxSizing: "border-box",
+              padding: 0,
+              margin: 0,
+              border: "none",
+              outline: "none",
+              background: "transparent",
+              cursor: "text",
+            }}
+          >
+            {inlineEdit.element.runs.map((run) => run.text).join("")}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -1,3 +1,4 @@
+import re
 from uuid import uuid4
 
 from .provider import (
@@ -8,6 +9,7 @@ from .provider import (
     RewriteTextItem,
     SlideRewriteRequest,
 )
+from .presenton_template import MODERN_CONTENT_LAYOUT_IDS, PresentonTemplateAdapter
 from .themes import get_theme
 
 
@@ -123,6 +125,29 @@ def _page_label(index: int, total: int) -> str:
     return f"{index:02d} / {total:02d}"
 
 
+def _content_points(text: str, count: int) -> list[str]:
+    cleaned = text.strip()
+    if not cleaned:
+        return [""] * count
+    parts = [
+        part.strip().lstrip("•-*– ")
+        for part in re.split(r"\n+|(?<=[.!?])\s+", cleaned)
+        if part.strip().lstrip("•-*– ")
+    ]
+    if len(parts) < count:
+        parts = _chunks(cleaned, count)
+    if len(parts) > count:
+        parts = [*parts[: count - 1], " ".join(parts[count - 1 :])]
+    return (parts + [""] * count)[:count]
+
+
+def _card_copy(text: str) -> tuple[str, str]:
+    words = text.split()
+    if len(words) <= 7:
+        return text, ""
+    return " ".join(words[:5]), " ".join(words[5:])
+
+
 class StubPresentationProvider:
     """Deterministic local provider and native editable layout renderer."""
 
@@ -207,6 +232,113 @@ class StubPresentationProvider:
             "id": str(uuid4()),
             "title": title,
             "background": background,
+            "revision": 0,
+            "elements": elements,
+        }
+
+    def _modern_cover_slide(
+        self,
+        title: str,
+        content: str,
+        colors: dict[str, str],
+        fonts: dict[str, str],
+    ) -> dict[str, object]:
+        """Adapted from Presenton Modern `title_slide` at the pinned revision."""
+        title_size = _title_font_size(title, 48)
+        elements = [
+            _text_element(title, x=40, y=204, width=578, height=130, size=title_size, color=colors["primary"], family=fonts["heading"], bold=True, line_height=1, name="primary_heading"),
+            _shape(x=40, y=350, width=137, height=4, color=colors["primary"], radius=1, name="accent_rule"),
+            _text_element(content, x=40, y=376, width=578, height=150, size=18, color=colors["text"], family=fonts["body"], line_height=1.3, name="supporting_paragraph"),
+            _shape(x=702, y=64, width=538, height=592, color=colors["surface"], radius=4, name="main_visual_panel"),
+            _shape(x=750, y=112, width=394, height=10, color=colors["primary"], radius=5, name="visual_rule"),
+            _text_element("01", x=750, y=164, width=394, height=180, size=138, color=colors["primary"], family=fonts["heading"], bold=True, line_height=1, name="visual_index"),
+            _text_element(title, x=754, y=470, width=390, height=110, size=22, color=colors["secondary"], family=fonts["body"], bold=True, line_height=1.15, name="visual_caption"),
+        ]
+        return {
+            "id": str(uuid4()),
+            "title": title,
+            "background": colors["background"],
+            "revision": 0,
+            "elements": elements,
+        }
+
+    def _modern_content_slide(
+        self,
+        index: int,
+        total: int,
+        title: str,
+        body: str,
+        colors: dict[str, str],
+        fonts: dict[str, str],
+    ) -> dict[str, object]:
+        """Canonical adaptations of the Presenton Modern content layouts."""
+        variant = (index - 1) % 4
+        title_size = _title_font_size(title, 46)
+        elements: list[dict[str, object]] = [
+            _shape(x=2, y=714, width=1276, height=4, color=colors["primary"], name="bottom_accent"),
+            _text_element(_page_label(index + 1, total), x=1080, y=38, width=130, height=28, size=12, color=colors["muted"], family=fonts["body"], align="right", letter_spacing=1, name="page_number"),
+        ]
+
+        if variant in {0, 1}:
+            points = _content_points(body, 5)
+            elements.extend([
+                _text_element(title, x=66, y=150, width=508, height=112, size=title_size, color=colors["primary"], family=fonts["heading"], bold=True, line_height=1, name="large_heading"),
+                _text_element(points[0], x=67, y=286, width=512, height=190, size=18, color=colors["text"], family=fonts["body"], line_height=1.3, name="supporting_paragraph"),
+            ])
+            if variant == 0:
+                positions = ((648, 82), (935, 82), (648, 298), (935, 298))
+                for point_index, ((x, y), point) in enumerate(zip(positions, points[1:]), start=1):
+                    heading, caption = _card_copy(point)
+                    elements.extend([
+                        _shape(x=x, y=y, width=275, height=190, color=colors["surface"], radius=12, name=f"feature_card_{point_index}"),
+                        _shape(x=x + 24, y=y + 22, width=38, height=38, color=colors["primary"], radius=8, name=f"feature_marker_{point_index}"),
+                        _text_element(str(point_index).zfill(2), x=x + 24, y=y + 29, width=38, height=22, size=12, color=colors["background"], family=fonts["body"], bold=True, align="center", name=f"feature_number_{point_index}"),
+                        _text_element(heading, x=x + 24, y=y + 78, width=227, height=44, size=17, color=colors["secondary"], family=fonts["heading"], bold=True, line_height=1.1, name=f"card_title_{point_index}"),
+                        _text_element(caption, x=x + 24, y=y + 126, width=227, height=48, size=11, color=colors["text"], family=fonts["body"], line_height=1.2, name=f"card_caption_{point_index}"),
+                    ])
+            else:
+                for point_index, point in enumerate(points[1:], start=1):
+                    heading, caption = _card_copy(point)
+                    y = 74 + (point_index - 1) * 142
+                    elements.extend([
+                        _shape(x=648, y=y, width=562, height=124, color=colors["surface"], radius=12, name=f"list_card_{point_index}"),
+                        _text_element(str(point_index).zfill(2), x=674, y=y + 28, width=54, height=28, size=17, color=colors["primary"], family=fonts["heading"], bold=True, name=f"list_number_{point_index}"),
+                        _text_element(heading, x=744, y=y + 23, width=420, height=34, size=18, color=colors["secondary"], family=fonts["heading"], bold=True, name=f"list_title_{point_index}"),
+                        _text_element(caption, x=744, y=y + 61, width=420, height=48, size=12, color=colors["text"], family=fonts["body"], line_height=1.2, name=f"list_caption_{point_index}"),
+                    ])
+        elif variant == 2:
+            points = _content_points(body, 3)
+            elements.append(_text_element(title, x=66, y=72, width=1090, height=92, size=title_size, color=colors["primary"], family=fonts["heading"], bold=True, line_height=1, name="large_heading"))
+            for point_index, point in enumerate(points, start=1):
+                heading, caption = _card_copy(point)
+                x = 66 + (point_index - 1) * 386
+                elements.extend([
+                    _shape(x=x, y=208, width=354, height=390, color=colors["surface"], radius=14, name=f"profile_card_{point_index}"),
+                    _text_element(str(point_index).zfill(2), x=x + 28, y=238, width=100, height=84, size=62, color=colors["primary"], family=fonts["heading"], bold=True, line_height=1, name=f"profile_number_{point_index}"),
+                    _shape(x=x + 28, y=342, width=88, height=4, color=colors["primary"], radius=2, name=f"profile_rule_{point_index}"),
+                    _text_element(heading, x=x + 28, y=380, width=298, height=70, size=22, color=colors["secondary"], family=fonts["heading"], bold=True, line_height=1.1, name=f"profile_title_{point_index}"),
+                    _text_element(caption, x=x + 28, y=472, width=298, height=92, size=13, color=colors["text"], family=fonts["body"], line_height=1.25, name=f"profile_caption_{point_index}"),
+                ])
+        else:
+            points = _content_points(body, 4)
+            elements.extend([
+                _text_element(title, x=66, y=82, width=520, height=170, size=title_size, color=colors["primary"], family=fonts["heading"], bold=True, line_height=1, name="large_heading"),
+                _shape(x=66, y=282, width=508, height=290, color=colors["primary"], radius=8, name="highlight_panel"),
+                _text_element(points[0], x=98, y=322, width=444, height=210, size=28, color=colors["background"], family=fonts["heading"], bold=True, line_height=1.18, vertical_align="middle", name="highlighted_text"),
+            ])
+            for point_index, point in enumerate(points[1:], start=1):
+                heading, caption = _card_copy(point)
+                y = 102 + (point_index - 1) * 174
+                elements.extend([
+                    _text_element(str(point_index).zfill(2), x=666, y=y, width=72, height=42, size=28, color=colors["primary"], family=fonts["heading"], bold=True, name=f"summary_number_{point_index}"),
+                    _text_element(heading, x=758, y=y, width=410, height=42, size=20, color=colors["secondary"], family=fonts["heading"], bold=True, name=f"summary_title_{point_index}"),
+                    _text_element(caption, x=758, y=y + 52, width=410, height=84, size=13, color=colors["text"], family=fonts["body"], line_height=1.25, name=f"summary_caption_{point_index}"),
+                ])
+
+        return {
+            "id": str(uuid4()),
+            "title": title,
+            "background": colors["background"],
             "revision": 0,
             "elements": elements,
         }
@@ -318,6 +450,36 @@ class StubPresentationProvider:
         palette = {key: str(value) for key, value in colors.items()}
         typography = {key: str(value) for key, value in fonts.items()}
         title_item = outline[0] if outline else {"title": request.title, "content": ""}
+        if theme["id"] == "modern-blue":
+            adapter = PresentonTemplateAdapter()
+            slides = [
+                adapter.compile_slide(
+                    "title_slide",
+                    title=str(title_item.get("title") or request.title),
+                    content=str(title_item.get("content") or ""),
+                    slide_index=0,
+                    slide_count=len(outline),
+                )
+            ]
+            for index, item in enumerate(outline[1:], start=1):
+                slides.append(
+                    adapter.compile_slide(
+                        MODERN_CONTENT_LAYOUT_IDS[(index - 1) % len(MODERN_CONTENT_LAYOUT_IDS)],
+                        title=str(item.get("title") or f"Key point {index}"),
+                        content=str(item.get("content") or ""),
+                        slide_index=index,
+                        slide_count=len(outline),
+                    )
+                )
+            return {
+                "id": str(request.presentation_id),
+                "schemaVersion": 1,
+                "title": request.title,
+                "language": request.language,
+                "revision": 0,
+                "theme": theme,
+                "slides": slides,
+            }
         slides = [
             self._cover_slide(
                 str(title_item.get("title") or request.title),

@@ -219,7 +219,11 @@ export function EditorSpike({ presentationId }: { presentationId: string | undef
     function onHistoryKeyDown(event: KeyboardEvent) {
       if (!(event.ctrlKey || event.metaKey)) return;
       const target = event.target;
-      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return;
+      if (
+        target instanceof HTMLInputElement
+        || target instanceof HTMLTextAreaElement
+        || (target instanceof HTMLElement && target.isContentEditable)
+      ) return;
       const key = event.key.toLowerCase();
       if (key === "z" && event.shiftKey) {
         event.preventDefault();
@@ -736,33 +740,35 @@ export function EditorSpike({ presentationId }: { presentationId: string | undef
       <section className="editor-grid">
         <aside className="filmstrip" aria-label="Slides">
           <h2>Slides</h2>
-          {document.slides.map((item, index) => {
-            const preview = item.elements.find((element) => element.type === "text");
-            return (
-              <div className="thumbnail-row" key={item.id}>
-                <button
-                  className={`thumbnail${index === activeSlideIndex ? " thumbnail--active" : ""}`}
-                  aria-label={`Open slide ${index + 1}`}
-                  onClick={() => {
-                    setActiveSlideIndex(index);
-                    setSelectedElementId(item.elements[0]?.id ?? null);
-                  }}
-                >
-                  <span className="thumbnail__number">{index + 1}</span>
-                  <span className="thumbnail__preview">
-                    {preview?.type === "text" ? preview.runs.map((run) => run.text).join("") : `Slide ${index + 1}`}
-                  </span>
-                </button>
-                {index === activeSlideIndex ? (
-                  <div className="thumbnail-actions" aria-label={`Actions for slide ${index + 1}`}>
-                    <button aria-label="Move slide up" disabled={index === 0} onClick={() => moveSlide(index, -1)}><ArrowUp size={14} /></button>
-                    <button aria-label="Move slide down" disabled={index === document.slides.length - 1} onClick={() => moveSlide(index, 1)}><ArrowDown size={14} /></button>
-                    <button aria-label="Delete slide" disabled={document.slides.length === 1} onClick={() => removeSlide(index)}><Trash size={14} /></button>
-                  </div>
-                ) : null}
-              </div>
-            );
-          })}
+          <div className="filmstrip__slides">
+            {document.slides.map((item, index) => {
+              const preview = item.elements.find((element) => element.type === "text");
+              return (
+                <div className="thumbnail-row" key={item.id}>
+                  <button
+                    className={`thumbnail${index === activeSlideIndex ? " thumbnail--active" : ""}`}
+                    aria-label={`Open slide ${index + 1}`}
+                    onClick={() => {
+                      setActiveSlideIndex(index);
+                      setSelectedElementId(item.elements[0]?.id ?? null);
+                    }}
+                  >
+                    <span className="thumbnail__number">{index + 1}</span>
+                    <span className="thumbnail__preview">
+                      {preview?.type === "text" ? preview.runs.map((run) => run.text).join("") : `Slide ${index + 1}`}
+                    </span>
+                  </button>
+                  {index === activeSlideIndex ? (
+                    <div className="thumbnail-actions" aria-label={`Actions for slide ${index + 1}`}>
+                      <button aria-label="Move slide up" disabled={index === 0} onClick={() => moveSlide(index, -1)}><ArrowUp size={14} /></button>
+                      <button aria-label="Move slide down" disabled={index === document.slides.length - 1} onClick={() => moveSlide(index, 1)}><ArrowDown size={14} /></button>
+                      <button aria-label="Delete slide" disabled={document.slides.length === 1} onClick={() => removeSlide(index)}><Trash size={14} /></button>
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
           <button className="add-slide" disabled={document.slides.length >= 30} onClick={addSlide}>
             <Plus size={15} /> Add slide
           </button>
@@ -806,7 +812,8 @@ export function EditorSpike({ presentationId }: { presentationId: string | undef
             <button className={panelTab === "properties" ? "is-active" : ""} onClick={() => setPanelTab("properties")}>Properties</button>
             <button className={panelTab === "ai" ? "is-active" : ""} onClick={() => setPanelTab("ai")}>AI</button>
           </div>
-          {panelTab === "ai" ? (
+          <div className="properties__content">
+            {panelTab === "ai" ? (
             <div className="ai-rewrite-panel">
               <span className="ai-rewrite-panel__icon"><Sparkle size={19} /></span>
               <h2>{aiTool === "rewrite" ? "Rewrite with AI" : "Generate an image"}</h2>
@@ -914,12 +921,6 @@ export function EditorSpike({ presentationId }: { presentationId: string | undef
             </div>
           ) : selected?.type === "text" ? (
             <div className="property-form">
-              <label htmlFor="selected-text">Text</label>
-              <textarea
-                id="selected-text"
-                value={selected.runs.map((run) => run.text).join("")}
-                onChange={(event) => updateSelectedText(event.target.value)}
-              />
               <div className="property-grid">
                 <label>
                   <span>Size</span>
@@ -974,7 +975,7 @@ export function EditorSpike({ presentationId }: { presentationId: string | undef
                   <option value="right">Align right</option>
                 </select>
               </div>
-              <p>Drag or resize the selected element directly on the canvas.</p>
+              <p>Double-click the text to edit it in place. Drag or resize it when selected.</p>
               {renderElementActions()}
             </div>
           ) : selected?.type === "image" ? (
@@ -1062,7 +1063,8 @@ export function EditorSpike({ presentationId }: { presentationId: string | undef
                 <p>Choose an element on the slide to inspect its properties.</p>
               </div>
             )
-          )}
+            )}
+          </div>
         </aside>
       </section>
       {actionError ? <p className="editor-notice" role="alert">{actionError}</p> : null}

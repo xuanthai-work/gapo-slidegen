@@ -35,7 +35,7 @@ class GenerationRequest:
     slide_count: int
     outline: list[dict[str, object]] = field(default_factory=list)
     source_kind: str = "prompt"
-    theme_id: str = "editorial-cobalt"
+    theme_id: str = "modern-blue"
 
 
 @dataclass(frozen=True, slots=True)

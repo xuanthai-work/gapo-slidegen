@@ -42,7 +42,12 @@ class GenerationInput(BaseModel):
     outline_id: UUID | None = None
     slide_count: int = Field(default=10, ge=1, le=30)
     language: str = Field(default="en", min_length=2, max_length=32)
-    theme_id: Literal["editorial-cobalt", "warm-studio", "midnight-signal"] = "editorial-cobalt"
+    theme_id: Literal[
+        "modern-blue",
+        "editorial-cobalt",
+        "warm-studio",
+        "midnight-signal",
+    ] = "modern-blue"
 
 
 class JobView(BaseModel):

@@ -67,7 +67,54 @@ dependency audit, and editor contract test run.
 - Save and reload without data loss.
 - Reject an invalid document at the product boundary.
 
-## Current port status
+## Current editor port status
 
 No Presenton editor implementation files have been copied yet. The canonical
-schema is a product-owned adaptation informed by the upstream data model.
+schema is a product-owned adaptation informed by the upstream data model. The
+template adapter below is independent of a future editor subsystem port.
+
+## Modern template vertical slice
+
+The first template port adapts geometry, content roles, typography, and visual
+tokens from these files at the pinned revision:
+
+```text
+templates/modern/template.json
+templates/executive/static/Montserrat Regular.ttf
+templates/executive/static/Montserrat Bold.ttf
+servers/nextjs/app/(presentation-generator)/(dashboard)/theme/components/ThemePanel/constants.ts
+```
+
+The pinned `templates/modern/template.json` is vendored unchanged at
+`apps/api/app/generation/templates/modern.json` (SHA-256
+`2BF0E68287893B0314DA49A46C7237A6BA6D1B32F1EB0BE2A457DCDB52C0D323`).
+`PresentonTemplateAdapter` reads that artifact at runtime and compiles its
+nested component tree into the product-owned canonical schema.
+
+Intentional changes:
+
+- Flatten Presenton groups, containers, flex rows, and grids into individually
+  editable canonical elements while retaining `componentId` and
+  `componentSlot` provenance metadata.
+- Convert polygon vectors to their editable rectangular bounds because the MVP
+  shape schema does not yet support arbitrary vector points.
+- Replace image and icon slots with editable placeholders until generated or
+  uploaded assets can be assigned to template slots.
+- Keep chart and table layouts disabled in automatic selection until structured
+  generation can supply truthful data for them.
+- Keep all element identities, geometry, and text editable through the current
+  editor and PPTX adapter.
+- Serve Montserrat locally instead of loading the Google Fonts CSS URL at
+  runtime.
+- Name the adapted initial theme `modern-blue` to avoid using Presenton as
+  product branding.
+
+The adapter automatically cycles through six compatible Modern content layouts;
+the imported artifact contains all ten upstream layouts. The Montserrat font
+files are licensed under the SIL Open Font License 1.1.
+The license text is stored at `LICENSES/Montserrat-OFL-1.1.txt`. The repeatable
+import command is:
+
+```powershell
+.\scripts\import-presenton-modern-assets.ps1 -PresentonRoot D:\work\Gapo\presenton
+```

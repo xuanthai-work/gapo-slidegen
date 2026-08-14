@@ -139,7 +139,7 @@ class GenerationService:
         *,
         user: User,
         outline_id: UUID,
-        theme_id: str = "editorial-cobalt",
+        theme_id: str = "modern-blue",
     ) -> GenerationJob:
         outline = self.session.scalar(build_owned_outline_query(outline_id, user.id))
         if outline is None:
