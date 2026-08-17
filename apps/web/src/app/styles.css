@@ -519,6 +519,51 @@ a { color: inherit; }
   line-height: 1.55;
 }
 
+.theme-preview {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  padding: var(--space-3);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  font-family: var(--font-sans);
+}
+
+.theme-preview__band {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 4px;
+  width: 28%;
+}
+
+.theme-preview__heading {
+  width: 65%;
+  height: 14px;
+  border-radius: 2px;
+  margin-bottom: var(--space-2);
+}
+
+.theme-preview__line {
+  height: 6px;
+  border-radius: 2px;
+  margin-bottom: var(--space-1);
+}
+
+.theme-preview__line--long { width: 85%; }
+.theme-preview__line--short { width: 55%; margin-bottom: var(--space-2); }
+
+.theme-preview__row {
+  display: flex;
+  gap: 6px;
+  margin-top: var(--space-2);
+}
+
+.theme-preview__row span {
+  flex: 1;
+  height: 24px;
+  border-radius: 3px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
 }
