@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from time import sleep
 from uuid import UUID, uuid4
 
@@ -129,7 +129,7 @@ class GenerationWorker:
                 )
             )
             asset_plan = self.pipeline.plan_assets(outline, base_request)
-            asset_plan.owner_id = claimed.owner_id
+            asset_plan = replace(asset_plan, owner_id=claimed.owner_id)
             asset_map = self._generate_assets(asset_plan)
             document = self.pipeline.render(base_request, outline, assets=asset_map)
             with self.session_factory() as session:
