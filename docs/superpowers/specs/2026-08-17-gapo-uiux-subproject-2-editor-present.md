@@ -160,11 +160,9 @@ Reuse the editorial token system from sub-project 1:
 
 ### 7.2 Save state
 
-- Save state remains in topbar but uses a more subtle dot + label pattern:
-  - Saved: muted check.
-  - Unsaved changes: muted dot.
-  - Saving: pulsing dot.
-  - Save failed: danger dot + toast.
+- Save state remains in topbar as a text readout.
+- The dot + label pattern (Saved/Unsaved/Saving/Save failed) was considered but deferred to keep the change set focused on toast/palette integration.
+- Save failures are surfaced with `toast.error()` in addition to the existing topbar text.
 
 ### 7.3 Present mode
 
@@ -219,6 +217,7 @@ Reuse the editorial token system from sub-project 1:
 
 ## 11. Open questions deferred to sub-project 3
 
+- Editor canvas polish (Konva-style interactions, layer panel, drag-and-drop improvements).
 - Animation and transition blocks between slides.
 - Chart, math, mermaid blocks.
 - Drag-and-drop layer panel reordering.

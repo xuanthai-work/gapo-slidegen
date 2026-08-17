@@ -300,17 +300,24 @@ Before merge: smoke E2E green; visual screenshots match design tokens; reduced-m
 
 ---
 
-## 10. Open questions deferred to sub-project 2
+## 10. Sub-project 2 outcomes (completed)
+
+The following items were deferred from sub-project 1 and completed in sub-project 2:
+
+- ✅ Present mode polish
+- ✅ Command palette (`cmdk`-style, scoped to the editor route)
+- ✅ Confetti / sonner-style toasts in editor
+
+## 11. Open questions deferred to sub-project 3
 
 - Editor canvas polish (Konva-style, layer panel, drag-and-drop improvements)
-- Present mode polish
-- Command palette (`cmdk`-style, scope appropriately)
-- Confetti / sonner-style toasts in editor
 - Chart/math/mermaid blocks (Presenton has; out of scope here)
+- Animation and transition blocks between slides
+- Real-time collaboration cursors
 
 ---
 
-## 11. Decisions log
+## 12. Decisions log
 
 | Decision | Choice |
 |---|---|
