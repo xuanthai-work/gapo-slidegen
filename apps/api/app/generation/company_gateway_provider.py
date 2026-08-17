@@ -8,21 +8,19 @@ from uuid import uuid4
 import httpx
 from pydantic import ValidationError
 
-from .gemini_provider import (
+from .outline_schema import (
     GeneratedOutlineResponse,
     GeneratedRewriteResponse,
     GeneratedSlideRewriteResponse,
     build_story_prompt,
 )
 from .provider import (
-    GenerationRequest,
     OutlineRequest,
     ProviderResponseError,
     RewriteRequest,
     RewriteTextItem,
     SlideRewriteRequest,
 )
-from .stub_provider import StubPresentationProvider
 
 
 def _json_object(text: str) -> str:
@@ -58,7 +56,6 @@ class CompanyGatewayProvider:
         self.chat_path = "/" + chat_path.strip("/")
         self.max_input_chars = max_input_chars
         self.client = client
-        self.renderer = StubPresentationProvider()
 
     def _chat(self, *, system: str, user: str) -> str:
         owns_client = self.client is None
@@ -136,6 +133,9 @@ class CompanyGatewayProvider:
                 "title": item.title.strip(),
                 "content": item.content.strip(),
                 "layout": item.layout,
+                "role": item.role,
+                "layout_id": item.layout_id,
+                "content_budget": item.content_budget.model_dump(),
                 "blocks": [block.model_dump() for block in item.blocks],
             }
             for item in response.items
@@ -186,27 +186,3 @@ class CompanyGatewayProvider:
         by_id = {item.id: item.text.strip() for item in rewritten.items}
         return [RewriteTextItem(id=item_id, text=by_id[item_id]) for item_id in expected_ids]
 
-    def generate(self, request: GenerationRequest) -> dict[str, object]:
-        outline = request.outline or self.generate_outline(
-            OutlineRequest(
-                title=request.title,
-                text=request.text,
-                sections=request.sections,
-                language=request.language,
-                slide_count=request.slide_count,
-                source_kind=request.source_kind,
-            )
-        )
-        return self.renderer.generate(
-            GenerationRequest(
-                presentation_id=request.presentation_id,
-                title=request.title,
-                text=request.text,
-                sections=request.sections,
-                language=request.language,
-                slide_count=request.slide_count,
-                outline=outline,
-                source_kind=request.source_kind,
-                theme_id=request.theme_id,
-            )
-        )

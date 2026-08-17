@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from ..auth import get_current_user
 from ..database import get_session
 from ..models import GenerationJob, JobStatus, JobType, OutlineRecord, PresentationRecord, User
-from .factory import build_provider
+from .factory import build_rewrite_provider, build_story_provider
 from .outlines import (
     InvalidOutline,
     OutlineConflict,
@@ -176,7 +176,7 @@ def get_generation_service(session: Annotated[Session, Depends(get_session)]) ->
 
 def get_outline_service(session: Annotated[Session, Depends(get_session)]) -> OutlineService:
     try:
-        return OutlineService(session, build_provider())
+        return OutlineService(session, build_story_provider())
     except ProviderConfigurationError as error:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -186,7 +186,7 @@ def get_outline_service(session: Annotated[Session, Depends(get_session)]) -> Ou
 
 def get_rewrite_provider() -> RewriteProvider:
     try:
-        return build_provider()
+        return build_rewrite_provider()
     except ProviderConfigurationError as error:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

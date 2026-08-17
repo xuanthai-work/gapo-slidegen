@@ -1,36 +1,23 @@
 from ..config import get_settings
 from .company_gateway_provider import CompanyGatewayProvider
-from .gemini_provider import GoogleAIStudioProvider
 from .gemini_image_provider import GoogleAIStudioImageProvider
 from .provider import ProviderConfigurationError
+from .stages.asset_planner import StubAssetPlanner
+from .stages.content_generator import ThemeDispatchContentGenerator
+from .stages.orchestrator import GenerationPipeline, NullAssetGenerator
 from .stub_provider import StubPresentationProvider
 
 
-def build_provider():
+# Legacy Gemini provider is kept as a disabled fallback. To re-enable, import
+# GoogleAIStudioProvider from .gemini_provider and add the branch below.
+# from .gemini_provider import GoogleAIStudioProvider
+
+
+def _build_story_planner():
     settings = get_settings()
     provider_name = settings.generation_provider.strip().lower()
     if provider_name == "stub":
         return StubPresentationProvider()
-    if provider_name in {"google-ai-studio", "gemini"}:
-        api_key = settings.google_api_key.get_secret_value().strip() if settings.google_api_key else ""
-        model = settings.google_model.strip() if settings.google_model else ""
-        missing = [
-            name
-            for name, value in (
-                ("SLIDEGEN_GOOGLE_API_KEY", api_key),
-                ("SLIDEGEN_GOOGLE_MODEL", model),
-            )
-            if not value
-        ]
-        if missing:
-            raise ProviderConfigurationError(
-                "Google AI Studio provider is missing: " + ", ".join(missing)
-            )
-        return GoogleAIStudioProvider(
-            api_key=api_key,
-            model=model,
-            max_input_chars=settings.google_max_input_chars,
-        )
     if provider_name == "company-gateway":
         api_key = (
             settings.company_gateway_api_key.get_secret_value().strip()
@@ -61,8 +48,35 @@ def build_provider():
         )
     raise ProviderConfigurationError(
         f"Generation provider {provider_name!r} is not configured. "
-        "Use 'stub', 'google-ai-studio', or 'company-gateway'."
+        "Use 'stub' or 'company-gateway'."
     )
+
+
+def build_story_provider() -> GenerationPipeline:
+    """Build the full generation pipeline used by the worker."""
+    return GenerationPipeline(
+        story_planner=_build_story_planner(),
+        content_generator=ThemeDispatchContentGenerator(),
+        asset_planner=StubAssetPlanner(),
+        asset_generator=NullAssetGenerator(),
+    )
+
+
+# Backward-compatible alias used by older callers; prefer build_story_provider.
+build_provider = build_story_provider
+
+
+def build_rewrite_provider():
+    """Return a provider that implements rewrite operations.
+
+    The stub provider intentionally does not support rewriting.
+    """
+    planner = _build_story_planner()
+    if not hasattr(planner, "rewrite_text"):
+        raise ProviderConfigurationError(
+            "The configured generation provider does not support text rewriting."
+        )
+    return planner
 
 
 def build_image_provider():

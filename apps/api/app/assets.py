@@ -13,11 +13,10 @@ from .generation.factory import build_image_provider
 from .generation.image_provider import ImageGenerationProvider, ImageGenerationRequest
 from .generation.provider import ProviderConfigurationError, ProviderError
 from .models import AssetRecord, User
-from .sources.service import safe_filename
 from .storage import LocalObjectStorage, ObjectStorage
+from .storage.assets import ALLOWED_IMAGE_TYPES, detect_image_type, store_asset
 
 router = APIRouter(prefix="/v1/assets", tags=["assets"])
-ALLOWED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/webp"}
 
 
 class AssetView(BaseModel):
@@ -42,16 +41,6 @@ class GenerateImageInput(BaseModel):
         return prompt
 
 
-def detect_image_type(data: bytes) -> str | None:
-    if data.startswith(b"\x89PNG\r\n\x1a\n"):
-        return "image/png"
-    if data.startswith(b"\xff\xd8\xff"):
-        return "image/jpeg"
-    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
-        return "image/webp"
-    return None
-
-
 def get_asset_storage() -> ObjectStorage:
     return LocalObjectStorage(get_settings().storage_root)
 
@@ -64,38 +53,6 @@ def get_image_provider() -> ImageGenerationProvider:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(error),
         ) from error
-
-
-def store_asset(
-    *,
-    user: User,
-    session: Session,
-    storage: ObjectStorage,
-    filename: str,
-    data: bytes,
-) -> AssetRecord:
-    detected_type = detect_image_type(data)
-    if detected_type is None or detected_type not in ALLOWED_IMAGE_TYPES:
-        raise ValueError("Only PNG, JPEG, and WebP images are supported.")
-    asset_id = uuid4()
-    clean_filename = safe_filename(filename)
-    storage_key = f"users/{user.id}/assets/{asset_id}/{clean_filename}"
-    storage.put(storage_key, data)
-    try:
-        record = AssetRecord(
-            id=asset_id,
-            owner_id=user.id,
-            filename=clean_filename,
-            content_type=detected_type,
-            storage_key=storage_key,
-            size=len(data),
-        )
-        session.add(record)
-        session.flush()
-        return record
-    except Exception:
-        storage.delete(storage_key)
-        raise
 
 
 @router.post("", response_model=AssetView, status_code=status.HTTP_201_CREATED)
@@ -116,7 +73,7 @@ async def upload_asset(
             detail="Only PNG, JPEG, and WebP images are supported.",
         )
     return store_asset(
-        user=user,
+        owner_id=user.id,
         session=session,
         storage=storage,
         filename=file.filename or "image",
@@ -144,7 +101,7 @@ def generate_asset(
             raise ProviderError("The image provider returned an unsupported image format.")
         extension = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}[detected_type]
         return store_asset(
-            user=user,
+            owner_id=user.id,
             session=session,
             storage=storage,
             filename=f"generated-{uuid4().hex[:12]}.{extension}",

@@ -16,7 +16,8 @@ polished slide decks — entirely on your own infrastructure.
 - **AI rewrite** — refine a selected text element or rewrite every text block on
   a slide from a single instruction, preserving layout and styles.
 - **AI image generation** — generate a 16:9 image from a prompt and place it
-  directly on a slide (optional; requires a configured image provider).
+  directly on a slide, or let the pipeline auto-place images for
+  `split-image` layouts when an image provider is configured.
 
 ### Rich Slide Editor
 - Add, remove, reorder, and duplicate slides.

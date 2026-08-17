@@ -4,7 +4,7 @@ import json
 import re
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 from uuid import uuid4
 
 
@@ -26,6 +26,29 @@ MODERN_STORY_LAYOUTS = {
     "alternating-cards": "title_list_of_cards_with_alternating_image",
     "profile-cards": "title_list_of_cards_with_image",
     "highlight-metrics": "title_image_description_list_with_highlighted_text_heading_description",
+}
+
+# Semantic slide role -> preferred Presenton layout ids. The renderer tries
+# these ids in order and falls back to the legacy story layout mapping when
+# none are available.
+ROLE_LAYOUT_CANDIDATES: dict[str, tuple[str, ...]] = {
+    "cover": ("title_slide",),
+    "agenda": ("table_of_contents",),
+    "section": ("section_header",),
+    "hook": ("title_description_image", "title_slide"),
+    "problem": ("title_description_image", "title_description_bullet_points_list_with_icon"),
+    "solution": ("title_description_image", "title_description_bullet_points_grid_with_icon"),
+    "big-stat": ("title_image_description_list_with_highlighted_text_heading_description",),
+    "comparison": ("title_description_image", "title_description_bullet_points_grid_with_icon"),
+    "process": ("title_description_bullet_points_list_with_icon",),
+    "timeline": ("title_description_bullet_points_list_with_icon",),
+    "features": ("title_description_bullet_points_grid_with_icon",),
+    "case-study": ("title_list_of_cards_with_image", "title_list_of_cards_with_alternating_image"),
+    "quote": ("quote_slide",),
+    "team": ("title_list_of_cards_with_image",),
+    "cta": ("closing_slide", "title_slide"),
+    "summary": ("title_description_bullet_points_list_with_icon",),
+    "content": ("title_description_bullet_points_list_with_icon",),
 }
 
 
@@ -189,6 +212,7 @@ class PresentonTemplateAdapter:
         slide_index: int,
         slide_count: int,
         blocks: list[dict[str, object]] | None = None,
+        assets: Mapping[str, str] | None = None,
     ) -> dict[str, object]:
         try:
             layout = self.layouts[layout_id]
@@ -196,6 +220,7 @@ class PresentonTemplateAdapter:
             raise ValueError(f"Unknown Presenton layout: {layout_id}") from error
 
         self.elements: list[dict[str, object]] = []
+        self.assets = assets or {}
         self.slots = _ContentSlots(
             title,
             content,
@@ -219,6 +244,7 @@ class PresentonTemplateAdapter:
             "title": title,
             "background": "#FFFFFF",
             "revision": 0,
+            "layout_id": layout_id,
             "elements": self.elements,
         }
 
@@ -359,6 +385,27 @@ class PresentonTemplateAdapter:
         if element_type == "image":
             base = self._base(source, x, y, width, height, component_id)
             if not base:
+                return
+            slot_name = str(source.get("name") or "")
+            asset_id = self.assets.get(slot_name)
+            if asset_id:
+                fit = str(source.get("fit") or "cover")
+                focus_x = _number(source.get("focus_x"), 50) / 100
+                focus_y = _number(source.get("focus_y"), 50) / 100
+                base.update(
+                    {
+                        "type": "image",
+                        "assetId": asset_id,
+                        "fit": fit if fit in {"contain", "cover", "fill"} else "cover",
+                        "focusX": max(0, min(1, focus_x)),
+                        "focusY": max(0, min(1, focus_y)),
+                        "cropScale": 1,
+                        "flipHorizontal": False,
+                        "flipVertical": False,
+                        "alt": f"{slot_name.replace('_', ' ').title()} visual",
+                    }
+                )
+                self.elements.append(base)
                 return
             radius = source.get("border_radius")
             radius_values = radius.values() if isinstance(radius, dict) else []

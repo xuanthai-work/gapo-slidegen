@@ -4,9 +4,15 @@ from uuid import UUID, uuid4
 
 from sqlalchemy.orm import Session, sessionmaker
 
+from ..config import get_settings
 from ..jobs.repository import JobRepository
 from ..models import GenerationJob, JobStatus, JobType, PresentationRecord, SourceRecord
-from .provider import GenerationRequest, PresentationProvider
+from ..storage.local import LocalObjectStorage
+from .factory import build_image_provider
+from .provider import GenerationRequest, OutlineRequest, ProviderConfigurationError
+from .stages.asset_generator import ImageAssetGenerator
+from .stages.models import StoryOutline
+from .stages.orchestrator import GenerationPipeline
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,10 +35,10 @@ class GenerationWorker:
     def __init__(
         self,
         session_factory: sessionmaker[Session],
-        provider: PresentationProvider,
+        pipeline: GenerationPipeline,
     ) -> None:
         self.session_factory = session_factory
-        self.provider = provider
+        self.pipeline = pipeline
 
     def _claim(self) -> ClaimedGeneration | None:
         with self.session_factory() as session:
@@ -73,26 +79,59 @@ class GenerationWorker:
             session.commit()
             return claimed
 
+    def _generate_assets(self, asset_plan) -> dict[tuple[int, str], str]:
+        if not asset_plan.requests:
+            return {}
+        try:
+            image_provider = build_image_provider()
+        except ProviderConfigurationError:
+            return {}
+        generator = ImageAssetGenerator(
+            image_provider=image_provider,
+            session_factory=self.session_factory,
+            storage=LocalObjectStorage(get_settings().storage_root),
+        )
+        generated = generator.generate(asset_plan)
+        return {
+            (asset.slot.slide_index, asset.slot.name): asset.asset_id
+            for asset in generated
+            if asset.asset_id is not None
+        }
+
     def process_once(self) -> bool:
         claimed = self._claim()
         if claimed is None:
             return False
 
         presentation_id = uuid4()
+        base_request = GenerationRequest(
+            presentation_id=presentation_id,
+            title=claimed.title,
+            text=claimed.text,
+            sections=claimed.sections,
+            outline=claimed.outline,
+            language=claimed.language,
+            slide_count=claimed.slide_count,
+            source_kind=claimed.source_kind,
+            theme_id=claimed.theme_id,
+        )
         try:
-            document = self.provider.generate(
-                GenerationRequest(
-                    presentation_id=presentation_id,
-                    title=claimed.title,
-                    text=claimed.text,
-                    sections=claimed.sections,
-                    outline=claimed.outline,
-                    language=claimed.language,
-                    slide_count=claimed.slide_count,
-                    source_kind=claimed.source_kind,
-                    theme_id=claimed.theme_id,
+            outline = StoryOutline.from_dicts(
+                claimed.outline or self.pipeline.generate_outline(
+                    OutlineRequest(
+                        title=claimed.title,
+                        text=claimed.text,
+                        sections=claimed.sections,
+                        language=claimed.language,
+                        slide_count=claimed.slide_count,
+                        source_kind=claimed.source_kind,
+                    )
                 )
             )
+            asset_plan = self.pipeline.plan_assets(outline, base_request)
+            asset_plan.owner_id = claimed.owner_id
+            asset_map = self._generate_assets(asset_plan)
+            document = self.pipeline.render(base_request, outline, assets=asset_map)
             with self.session_factory() as session:
                 job = session.get(GenerationJob, claimed.job_id)
                 if job is None or job.status is not JobStatus.RUNNING:
@@ -110,7 +149,7 @@ class GenerationWorker:
                 )
                 JobRepository(session).succeed(
                     job,
-                    {"presentation_id": str(presentation_id), "provider": self.provider.name},
+                    {"presentation_id": str(presentation_id), "provider": self.pipeline.name},
                 )
                 session.commit()
             return True
