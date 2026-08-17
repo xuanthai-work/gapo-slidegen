@@ -8,6 +8,7 @@
     "start": "next start",
     "test": "vitest run",
     "e2e": "playwright test",
+    "visual:capture": "node tests/visual/capture.mjs",
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
