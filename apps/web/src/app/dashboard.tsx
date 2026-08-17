@@ -19,15 +19,38 @@ import {
   type StoredPresentation,
   type StoredSource,
 } from "../lib/api";
+import { EmptyState } from "./components/empty-state";
+import { LandingHero } from "./components/landing-hero";
+import { Skeleton } from "./components/skeleton";
+import { TemplateCard } from "./components/template-card";
+import { ThemeToggle } from "./components/theme-toggle";
 
 type ComposerMode = "prompt" | "manuscript" | "file";
 type ThemeId = "modern-blue" | "editorial-cobalt" | "warm-studio" | "midnight-signal";
 
-const themes: Array<{ id: ThemeId; name: string; colors: [string, string, string] }> = [
-  { id: "modern-blue", name: "Modern Blue", colors: ["#FFFFFF", "#1E4CD9", "#F5F8FE"] },
-  { id: "editorial-cobalt", name: "Editorial", colors: ["#172033", "#285FC7", "#E3AA45"] },
-  { id: "warm-studio", name: "Warm Studio", colors: ["#2E2925", "#C45132", "#D9A441"] },
-  { id: "midnight-signal", name: "Midnight", colors: ["#09111F", "#4F86F7", "#F4B860"] },
+type ThemePalette = { paper: string; ink: string; accent: string };
+
+const themes: Array<{ id: ThemeId; name: string; colors: ThemePalette }> = [
+  {
+    id: "modern-blue",
+    name: "Modern Blue",
+    colors: { paper: "#FFFFFF", ink: "#1E4CD9", accent: "#F5F8FE" },
+  },
+  {
+    id: "editorial-cobalt",
+    name: "Editorial",
+    colors: { paper: "#172033", ink: "#285FC7", accent: "#E3AA45" },
+  },
+  {
+    id: "warm-studio",
+    name: "Warm Studio",
+    colors: { paper: "#2E2925", ink: "#C45132", accent: "#D9A441" },
+  },
+  {
+    id: "midnight-signal",
+    name: "Midnight",
+    colors: { paper: "#09111F", ink: "#4F86F7", accent: "#F4B860" },
+  },
 ];
 
 export function Dashboard() {
@@ -269,36 +292,79 @@ export function Dashboard() {
   const activeGenerationJob = activeGenerationSource ? jobs[activeGenerationSource.id] : undefined;
 
   if (loading) {
-    return <main className="dashboard-loading">Loading your workspace…</main>;
+    return (
+      <main className="dashboard-shell">
+        <header className="dashboard-topbar">
+          <a className="dashboard-brand" href="/">
+            <span className="dashboard-brand__mark"><MagicWand size={18} weight="fill" /></span>
+            <span className="dashboard-brand__wordmark">Gapo SlideGen</span>
+          </a>
+        </header>
+        <div className="dashboard-content">
+          <div className="dashboard-hero">
+            <Skeleton width="120px" height="11px" />
+            <div style={{ height: "var(--space-3)" }} />
+            <Skeleton width="60%" height="56px" />
+            <div style={{ height: "var(--space-3)" }} />
+            <Skeleton width="80%" height="16px" />
+          </div>
+          <Skeleton width="100%" height="320px" radius="var(--radius-lg)" />
+        </div>
+      </main>
+    );
   }
 
   return (
     <main className="dashboard-shell">
+      <a className="u-skip-link" href="#dashboard-content">Skip to main content</a>
+
       <header className="dashboard-topbar">
         <a className="dashboard-brand" href="/">
           <span className="dashboard-brand__mark"><MagicWand size={18} weight="fill" /></span>
-          Gapo SlideGen
+          <span className="dashboard-brand__wordmark">Gapo SlideGen</span>
         </a>
         <div className="account-menu">
           <span>{user?.email}</span>
+          <ThemeToggle />
           <button className="icon-button" onClick={logout} aria-label="Sign out">
             <SignOut size={18} />
           </button>
         </div>
       </header>
 
-      <div className="dashboard-content">
-        <section className="dashboard-hero">
-          <p className="eyebrow">Presentation workspace</p>
-          <h1>What are we presenting?</h1>
-          <p>Bring a rough idea or finished content. The source stays editable and owned by you.</p>
-        </section>
+      <div id="dashboard-content" className="dashboard-content">
+        <LandingHero
+          eyebrow="Presentation workspace"
+          heading="What are we presenting?"
+          body="Bring a rough idea or finished content. The source stays editable and owned by you."
+        />
 
         <section className="composer-card">
           <div className="composer-tabs" role="tablist" aria-label="Source type">
-            <button className={mode === "prompt" ? "is-active" : ""} onClick={() => setMode("prompt")}>Prompt</button>
-            <button className={mode === "manuscript" ? "is-active" : ""} onClick={() => setMode("manuscript")}>Full text</button>
-            <button className={mode === "file" ? "is-active" : ""} onClick={() => setMode("file")}>Upload</button>
+            <button
+              className={mode === "prompt" ? "is-active" : ""}
+              role="tab"
+              aria-selected={mode === "prompt"}
+              onClick={() => setMode("prompt")}
+            >
+              Prompt
+            </button>
+            <button
+              className={mode === "manuscript" ? "is-active" : ""}
+              role="tab"
+              aria-selected={mode === "manuscript"}
+              onClick={() => setMode("manuscript")}
+            >
+              Full text
+            </button>
+            <button
+              className={mode === "file" ? "is-active" : ""}
+              role="tab"
+              aria-selected={mode === "file"}
+              onClick={() => setMode("file")}
+            >
+              Upload
+            </button>
           </div>
 
           {mode === "file" ? (
@@ -321,32 +387,39 @@ export function Dashboard() {
               <label className="button button--primary" htmlFor="source-file">
                 <UploadSimple size={17} /> {submitting ? "Working…" : "Choose file & generate"}
               </label>
-              <fieldset className="theme-picker theme-picker--upload">
-                <legend>Visual theme</legend>
-                <div>
+              <fieldset className="template-picker" aria-label="Visual theme">
+                <legend className="template-picker__legend">Visual theme</legend>
+                <div className="template-picker__grid">
                   {themes.map((theme) => (
-                    <label className={themeId === theme.id ? "is-selected" : ""} key={theme.id}>
-                      <input type="radio" name="upload-theme" value={theme.id} checked={themeId === theme.id} onChange={() => setThemeId(theme.id)} />
-                      <span className="theme-swatches" aria-hidden="true">
-                        {theme.colors.map((color) => <i style={{ background: color }} key={color} />)}
-                      </span>
-                      <span>{theme.name}</span>
-                    </label>
+                    <TemplateCard
+                      key={theme.id}
+                      id={theme.id}
+                      name={theme.name}
+                      colors={theme.colors}
+                      selected={themeId === theme.id}
+                      onSelect={(id) => setThemeId(id as ThemeId)}
+                    />
                   ))}
                 </div>
               </fieldset>
             </div>
           ) : (
             <form className="composer-form" onSubmit={createTextSource}>
+              <label htmlFor="composer-title" className="composer-form__label">
+                Presentation title <span className="composer-form__hint">(optional)</span>
+              </label>
               <input
-                aria-label="Presentation title"
-                placeholder="Presentation title (optional)"
+                id="composer-title"
+                placeholder="A concise, memorable title"
                 value={title}
                 onChange={(event) => setTitle(event.target.value)}
                 maxLength={500}
               />
+              <label htmlFor="composer-text" className="composer-form__label">
+                {mode === "prompt" ? "Prompt" : "Source text"}
+              </label>
               <textarea
-                aria-label={mode === "prompt" ? "Presentation prompt" : "Presentation content"}
+                id="composer-text"
                 placeholder={
                   mode === "prompt"
                     ? "Describe the audience, goal, and key message…"
@@ -356,23 +429,28 @@ export function Dashboard() {
                 onChange={(event) => setText(event.target.value)}
                 required
               />
-              <fieldset className="theme-picker">
-                <legend>Visual theme</legend>
-                <div>
+              <fieldset className="template-picker" aria-label="Visual theme">
+                <legend className="template-picker__legend">Visual theme</legend>
+                <div className="template-picker__grid">
                   {themes.map((theme) => (
-                    <label className={themeId === theme.id ? "is-selected" : ""} key={theme.id}>
-                      <input type="radio" name="theme" value={theme.id} checked={themeId === theme.id} onChange={() => setThemeId(theme.id)} />
-                      <span className="theme-swatches" aria-hidden="true">
-                        {theme.colors.map((color) => <i style={{ background: color }} key={color} />)}
-                      </span>
-                      <span>{theme.name}</span>
-                    </label>
+                    <TemplateCard
+                      key={theme.id}
+                      id={theme.id}
+                      name={theme.name}
+                      colors={theme.colors}
+                      selected={themeId === theme.id}
+                      onSelect={(id) => setThemeId(id as ThemeId)}
+                    />
                   ))}
                 </div>
               </fieldset>
               <div className="composer-actions">
                 <span>You will go straight to the editable presentation.</span>
-                <button className="button button--primary" type="submit" disabled={submitting || !text.trim()}>
+                <button
+                  className="button button--primary"
+                  type="submit"
+                  disabled={submitting || !text.trim()}
+                >
                   <MagicWand size={17} /> {submitting ? "Working…" : "Generate presentation"}
                 </button>
               </div>
@@ -382,17 +460,33 @@ export function Dashboard() {
         </section>
 
         {activeGenerationSource ? (
-          <section className={`generation-banner${activeGenerationJob?.status === "failed" ? " generation-banner--failed" : ""}${activeGenerationJob?.status === "canceled" ? " generation-banner--canceled" : ""}`} aria-live="polite">
-            <span className="generation-banner__icon"><MagicWand size={20} /></span>
+          <section
+            className={`generation-banner${
+              activeGenerationJob?.status === "failed" ? " generation-banner--failed" : ""
+            }${
+              activeGenerationJob?.status === "canceled" ? " generation-banner--canceled" : ""
+            }`}
+            aria-live="polite"
+          >
+            <span className="generation-banner__icon">
+              <MagicWand size={20} />
+            </span>
             <div className="generation-banner__content">
-              <strong>
+              <p className="generation-banner__eyebrow">
                 {activeGenerationJob?.status === "failed"
                   ? "Generation failed"
                   : activeGenerationJob?.status === "canceled"
                     ? "Generation canceled"
-                    : `Building “${activeGenerationSource.title}”`}
+                    : "Building presentation"}
+              </p>
+              <strong className="generation-banner__heading">
+                {activeGenerationJob?.status === "running" || activeGenerationJob?.status === "queued"
+                  ? `“${activeGenerationSource.title}”`
+                  : activeGenerationJob?.status === "failed" || activeGenerationJob?.status === "canceled"
+                    ? activeGenerationSource.title
+                    : `“${activeGenerationSource.title}”`}
               </strong>
-              <p>
+              <p className="generation-banner__body">
                 {startingSourceId === activeGenerationSource.id || activeGenerationJob?.status === "queued"
                   ? "Queued — preparing your source…"
                   : activeGenerationJob?.status === "running"
@@ -417,37 +511,54 @@ export function Dashboard() {
               ) : null}
             </div>
             {activeGenerationJob?.status === "failed" || activeGenerationJob?.status === "canceled" ? (
-              <button className="button" onClick={() => void startGeneration(activeGenerationSource)}>Retry</button>
+              <button className="button" onClick={() => void startGeneration(activeGenerationSource)}>
+                Retry
+              </button>
             ) : activeGenerationJob?.status === "queued" || activeGenerationJob?.status === "running" ? (
               <button
                 className="button generation-cancel"
                 disabled={cancelingJobId === activeGenerationJob.id}
-                onClick={() => void cancelGeneration(activeGenerationSource.id, activeGenerationJob.id)}
+                onClick={() =>
+                  void cancelGeneration(activeGenerationSource.id, activeGenerationJob.id)
+                }
               >
                 {cancelingJobId === activeGenerationJob.id ? "Canceling…" : "Cancel"}
               </button>
-            ) : <span className="generation-pulse" aria-hidden="true" />}
+            ) : (
+              <span className="generation-pulse" aria-hidden="true" />
+            )}
           </section>
         ) : null}
 
         <section className="presentation-section">
           <div className="section-heading">
-            <div><p className="eyebrow">Your decks</p><h2>Recent presentations</h2></div>
-            <span>{presentations.length} deck{presentations.length === 1 ? "" : "s"}</span>
+            <div>
+              <p className="eyebrow">Your decks</p>
+              <h2 className="section-heading__title">Recent presentations</h2>
+            </div>
+            <span className="section-heading__count">
+              {presentations.length} deck{presentations.length === 1 ? "" : "s"}
+            </span>
           </div>
           {presentations.length === 0 ? (
-            <div className="presentation-empty">
-              Generated presentations will appear here so you can reopen and continue editing them.
-            </div>
+            <EmptyState
+              icon={<FilePpt size={22} weight="duotone" />}
+              eyebrow="Your decks"
+              heading="No presentations yet"
+              body="Generated presentations will appear here so you can reopen and continue editing them."
+            />
           ) : (
             <div className="presentation-strip">
               {presentations.map((presentation) => {
                 const candidate = presentation.document as { slides?: unknown[] } | null;
                 const count = Array.isArray(candidate?.slides) ? candidate.slides.length : 0;
                 return (
-                  <article className="presentation-item" key={presentation.id}>
+                  <article className="presentation-item u-lift" key={presentation.id}>
                     {renamingPresentationId === presentation.id ? (
-                      <form className="presentation-rename" onSubmit={(event) => void renamePresentation(event, presentation)}>
+                      <form
+                        className="presentation-rename"
+                        onSubmit={(event) => void renamePresentation(event, presentation)}
+                      >
                         <label htmlFor={`rename-${presentation.id}`}>Presentation name</label>
                         <input
                           id={`rename-${presentation.id}`}
@@ -457,19 +568,37 @@ export function Dashboard() {
                           onChange={(event) => setRenameDraft(event.target.value)}
                         />
                         <div>
-                          <button className="button button--primary" type="submit" disabled={!renameDraft.trim() || presentationActionId === presentation.id}>
+                          <button
+                            className="button button--primary"
+                            type="submit"
+                            disabled={!renameDraft.trim() || presentationActionId === presentation.id}
+                          >
                             {presentationActionId === presentation.id ? "Saving…" : "Save"}
                           </button>
-                          <button className="button" type="button" disabled={presentationActionId === presentation.id} onClick={() => setRenamingPresentationId(null)}>Cancel</button>
+                          <button
+                            className="button"
+                            type="button"
+                            disabled={presentationActionId === presentation.id}
+                            onClick={() => setRenamingPresentationId(null)}
+                          >
+                            Cancel
+                          </button>
                         </div>
                       </form>
                     ) : (
                       <>
-                        <a className="presentation-item__open" href={`/editor?presentation=${presentation.id}`}>
-                          <span className="presentation-item__preview"><FilePpt size={24} /></span>
+                        <a
+                          className="presentation-item__open"
+                          href={`/editor?presentation=${presentation.id}`}
+                        >
+                          <span className="presentation-item__preview">
+                            <FilePpt size={24} />
+                          </span>
                           <span className="presentation-item__copy">
                             <strong>{presentation.title}</strong>
-                            <small>{count} slide{count === 1 ? "" : "s"}</small>
+                            <small className="presentation-item__count">
+                              <span className="presentation-item__count-number">{count}</span> slide{count === 1 ? "" : "s"}
+                            </small>
                           </span>
                           <ArrowRight size={16} />
                         </a>
@@ -504,7 +633,6 @@ export function Dashboard() {
             </div>
           )}
         </section>
-
       </div>
     </main>
   );
