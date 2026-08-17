@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     google_model: str | None = None
     google_image_model: str | None = None
     google_max_input_chars: int = Field(default=120_000, ge=1_000, le=2_000_000)
+    company_gateway_url: str | None = None
+    company_gateway_api_key: SecretStr | None = None
+    company_gateway_model: str | None = None
+    company_gateway_chat_path: str = "/v1/chat/completions"
 
 
 @lru_cache

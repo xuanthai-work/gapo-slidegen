@@ -2,7 +2,14 @@ from uuid import uuid4
 
 from app.generation.provider import GenerationRequest
 from app.generation.presenton_template import MODERN_CONTENT_LAYOUT_IDS, PresentonTemplateAdapter
+from app.generation.router import GenerationInput
 from app.generation.stub_provider import StubPresentationProvider
+
+
+def test_generation_input_does_not_expose_user_selected_slide_count() -> None:
+    payload = GenerationInput(source_id=uuid4(), slide_count=12)
+
+    assert "slide_count" not in payload.model_dump()
 
 
 def test_stub_provider_outputs_canonical_editable_document() -> None:
@@ -41,6 +48,21 @@ def test_stub_provider_respects_thirty_slide_limit_input() -> None:
         )
     )
     assert len(document["slides"]) == 30
+
+
+def test_stub_provider_chooses_bounded_slide_count_in_auto_mode() -> None:
+    document = StubPresentationProvider().generate(
+        GenerationRequest(
+            presentation_id=uuid4(),
+            title="Automatic deck",
+            text="A focused idea with a small amount of supporting context.",
+            sections=[],
+            language="en",
+            slide_count=None,
+        )
+    )
+
+    assert len(document["slides"]) == 5
 
 
 def test_stub_provider_uses_reviewed_outline_verbatim() -> None:

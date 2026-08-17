@@ -1,4 +1,5 @@
 from ..config import get_settings
+from .company_gateway_provider import CompanyGatewayProvider
 from .gemini_provider import GoogleAIStudioProvider
 from .gemini_image_provider import GoogleAIStudioImageProvider
 from .provider import ProviderConfigurationError
@@ -30,9 +31,37 @@ def build_provider():
             model=model,
             max_input_chars=settings.google_max_input_chars,
         )
+    if provider_name == "company-gateway":
+        api_key = (
+            settings.company_gateway_api_key.get_secret_value().strip()
+            if settings.company_gateway_api_key
+            else ""
+        )
+        base_url = (settings.company_gateway_url or "").strip()
+        model = (settings.company_gateway_model or "").strip()
+        missing = [
+            name
+            for name, value in (
+                ("SLIDEGEN_COMPANY_GATEWAY_URL", base_url),
+                ("SLIDEGEN_COMPANY_GATEWAY_API_KEY", api_key),
+                ("SLIDEGEN_COMPANY_GATEWAY_MODEL", model),
+            )
+            if not value
+        ]
+        if missing:
+            raise ProviderConfigurationError(
+                "Company gateway provider is missing: " + ", ".join(missing)
+            )
+        return CompanyGatewayProvider(
+            base_url=base_url,
+            api_key=api_key,
+            model=model,
+            chat_path=settings.company_gateway_chat_path,
+            max_input_chars=settings.google_max_input_chars,
+        )
     raise ProviderConfigurationError(
         f"Generation provider {provider_name!r} is not configured. "
-        "Use 'stub' or 'google-ai-studio'."
+        "Use 'stub', 'google-ai-studio', or 'company-gateway'."
     )
 
 

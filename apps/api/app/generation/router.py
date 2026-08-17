@@ -40,7 +40,6 @@ router = APIRouter(tags=["generation"])
 class GenerationInput(BaseModel):
     source_id: UUID | None = None
     outline_id: UUID | None = None
-    slide_count: int = Field(default=10, ge=1, le=30)
     language: str = Field(default="en", min_length=2, max_length=32)
     theme_id: Literal[
         "modern-blue",
@@ -96,10 +95,27 @@ class OutlineInput(BaseModel):
     language: str = Field(default="en", min_length=2, max_length=32)
 
 
+class OutlineStoryBlock(BaseModel):
+    heading: str = Field(default="", max_length=160)
+    body: str = Field(default="", max_length=600)
+    label: str = Field(default="", max_length=80)
+    value: str = Field(default="", max_length=80)
+
+
 class OutlineItem(BaseModel):
     id: str = Field(min_length=1, max_length=160)
     title: str = Field(min_length=1, max_length=500)
     content: str = Field(default="", max_length=100_000)
+    layout: Literal[
+        "cover",
+        "feature-grid",
+        "feature-list",
+        "split-image",
+        "alternating-cards",
+        "profile-cards",
+        "highlight-metrics",
+    ] | None = None
+    blocks: list[OutlineStoryBlock] = Field(default_factory=list, max_length=6)
 
 
 class OutlineView(BaseModel):
@@ -312,7 +328,6 @@ def request_generation(
         return service.enqueue(
             user=user,
             source_id=payload.source_id,
-            slide_count=payload.slide_count,
             language=payload.language,
             theme_id=payload.theme_id,
         )

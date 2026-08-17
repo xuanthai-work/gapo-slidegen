@@ -19,6 +19,14 @@ MODERN_CONTENT_LAYOUT_IDS = (
     "title_list_of_cards_with_image",
     "title_image_description_list_with_highlighted_text_heading_description",
 )
+MODERN_STORY_LAYOUTS = {
+    "feature-grid": "title_description_bullet_points_grid_with_icon",
+    "feature-list": "title_description_bullet_points_list_with_icon",
+    "split-image": "title_description_image",
+    "alternating-cards": "title_list_of_cards_with_alternating_image",
+    "profile-cards": "title_list_of_cards_with_image",
+    "highlight-metrics": "title_image_description_list_with_highlighted_text_heading_description",
+}
 
 
 def _number(value: object, default: float = 0) -> float:
@@ -75,17 +83,29 @@ def _card_copy(text: str) -> tuple[str, str]:
 
 
 class _ContentSlots:
-    def __init__(self, title: str, content: str, *, cover: bool) -> None:
+    def __init__(
+        self,
+        title: str,
+        content: str,
+        *,
+        cover: bool,
+        blocks: list[dict[str, object]] | None = None,
+    ) -> None:
         self.title = title
         self.content = content
         self.cover = cover
         self.points = _content_points(content)
+        self.structured = blocks is not None
+        self.blocks = blocks or []
         self.counts: dict[str, int] = {}
 
     def _next(self, name: str) -> tuple[str, int]:
-        family = re.sub(r"_(title|heading|caption|body|description|label|value|text)$", "", name)
         index = self.counts.get(name, 0)
         self.counts[name] = index + 1
+        if name.startswith("upper_text_"):
+            index *= 2
+        elif name.startswith("lower_text_"):
+            index = index * 2 + 1
         return self.points[index % len(self.points)], index
 
     def text(self, name_value: object, original: str) -> str:
@@ -116,17 +136,22 @@ class _ContentSlots:
         if name in {"supporting_paragraph", "body_paragraph", "intro_paragraph", "stack_body"}:
             return self.content
         point, index = self._next(name)
+        block = self.blocks[index] if index < len(self.blocks) else {}
+        block_heading = str(block.get("heading") or "").strip()
+        block_body = str(block.get("body") or "").strip()
+        block_label = str(block.get("label") or "").strip()
+        block_value = str(block.get("value") or "").strip()
         heading, description = _card_copy(point)
         if any(token in name for token in ("number", "badge")):
             return str(index + 1).zfill(2)
         if "metric_label" in name:
-            return f"KEY POINT {index + 1:02d}"
+            return block_label or ("" if self.structured else f"KEY POINT {index + 1:02d}")
         if "metric_value" in name:
-            return heading
+            return block_value or block_heading or ("" if self.structured else heading)
         if any(token in name for token in ("description", "caption", "body")):
-            return description or point
+            return block_body or ("" if self.structured else description or point)
         if any(token in name for token in ("title", "heading", "text")):
-            return heading or point
+            return block_heading or ("" if self.structured else heading or point)
         return original
 
 
@@ -163,6 +188,7 @@ class PresentonTemplateAdapter:
         content: str,
         slide_index: int,
         slide_count: int,
+        blocks: list[dict[str, object]] | None = None,
     ) -> dict[str, object]:
         try:
             layout = self.layouts[layout_id]
@@ -170,7 +196,12 @@ class PresentonTemplateAdapter:
             raise ValueError(f"Unknown Presenton layout: {layout_id}") from error
 
         self.elements: list[dict[str, object]] = []
-        self.slots = _ContentSlots(title, content, cover=layout_id == "title_slide")
+        self.slots = _ContentSlots(
+            title,
+            content,
+            cover=layout_id == "title_slide",
+            blocks=blocks,
+        )
         self.slide_index = slide_index
         self.slide_count = slide_count
         for component in layout.get("components", []):

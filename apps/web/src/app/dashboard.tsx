@@ -36,7 +36,6 @@ export function Dashboard() {
   const [startingSourceId, setStartingSourceId] = useState<string | null>(null);
   const [activeGenerationSource, setActiveGenerationSource] = useState<StoredSource | null>(null);
   const [mode, setMode] = useState<ComposerMode>("prompt");
-  const [slideCount, setSlideCount] = useState(10);
   const [themeId, setThemeId] = useState<ThemeId>("modern-blue");
   const [title, setTitle] = useState("");
   const [text, setText] = useState("");
@@ -111,7 +110,7 @@ export function Dashboard() {
       });
       setTitle("");
       setText("");
-      await startGeneration(source, slideCount, themeId);
+      await startGeneration(source, themeId);
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : "Could not create the source.");
     } finally {
@@ -129,7 +128,7 @@ export function Dashboard() {
         method: "POST",
         body,
       });
-      await startGeneration(source, slideCount, themeId);
+      await startGeneration(source, themeId);
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : "Could not upload the document.");
     } finally {
@@ -174,7 +173,6 @@ export function Dashboard() {
 
   async function startGeneration(
     source: StoredSource,
-    requestedSlideCount = 10,
     requestedThemeId: ThemeId = themeId,
   ) {
     setError(null);
@@ -185,7 +183,6 @@ export function Dashboard() {
         method: "POST",
         body: JSON.stringify({
           source_id: source.id,
-          slide_count: requestedSlideCount,
           language: navigator.language.toLowerCase().startsWith("vi") ? "vi" : "en",
           theme_id: requestedThemeId,
         }),
@@ -324,12 +321,6 @@ export function Dashboard() {
               <label className="button button--primary" htmlFor="source-file">
                 <UploadSimple size={17} /> {submitting ? "Working…" : "Choose file & generate"}
               </label>
-              <div className="composer-options composer-options--upload">
-                <label className="slide-count-field">
-                  <span>Slides</span>
-                  <input type="number" min="1" max="30" value={slideCount} onChange={(event) => setSlideCount(Math.min(30, Math.max(1, Number(event.target.value) || 1)))} />
-                </label>
-              </div>
               <fieldset className="theme-picker theme-picker--upload">
                 <legend>Visual theme</legend>
                 <div>
@@ -365,12 +356,6 @@ export function Dashboard() {
                 onChange={(event) => setText(event.target.value)}
                 required
               />
-              <div className="composer-options">
-                <label className="slide-count-field">
-                  <span>Slides</span>
-                  <input type="number" min="1" max="30" value={slideCount} onChange={(event) => setSlideCount(Math.min(30, Math.max(1, Number(event.target.value) || 1)))} />
-                </label>
-              </div>
               <fieldset className="theme-picker">
                 <legend>Visual theme</legend>
                 <div>
@@ -432,7 +417,7 @@ export function Dashboard() {
               ) : null}
             </div>
             {activeGenerationJob?.status === "failed" || activeGenerationJob?.status === "canceled" ? (
-              <button className="button" onClick={() => void startGeneration(activeGenerationSource, slideCount)}>Retry</button>
+              <button className="button" onClick={() => void startGeneration(activeGenerationSource)}>Retry</button>
             ) : activeGenerationJob?.status === "queued" || activeGenerationJob?.status === "running" ? (
               <button
                 className="button generation-cancel"

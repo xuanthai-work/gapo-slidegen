@@ -16,12 +16,19 @@ Status: local end-to-end foundation implemented; gateway adapter pending
 
 The dashboard uses one-click generation from a new source and opens the editable
 presentation when the background job completes. The provider creates a bounded
-internal story plan, but there is no user-facing outline review step. Existing
-outline records and endpoints remain temporarily for database compatibility and
-are not called by the web product.
+internal story plan, but there is no user-facing outline review step. Each slide
+in that plan contains a semantic layout id, a slide-level takeaway, and finished
+copy blocks with deliberate headings and bodies. The template adapter maps those
+blocks directly to named Presenton slots; it does not split AI prose to invent
+card headings. Legacy title/content-only outlines retain a deterministic fallback.
+Existing outline records and endpoints remain temporarily for database
+compatibility and are not called by the web product.
 
 All job and presentation reads filter by the authenticated owner. The maximum
-slide count remains 30 at both the API and canonical schema boundaries.
+slide count remains 30 at both the API and canonical schema boundaries. New
+generation flow always uses Auto: the AI chooses a narrative-appropriate count,
+normally 5 to 15. The user can add or remove slides in the editor afterward.
+The offline stub uses a bounded word-count heuristic for Auto mode.
 
 Generation jobs also snapshot a validated theme id. Modern Blue is the default
 and is compiled from the pinned Presenton Modern template artifact;
@@ -37,7 +44,7 @@ continue to use their six product-owned native layout archetypes.
 ## Provider boundary
 
 `PresentationProvider` receives normalized source text, sections, language,
-slide count, title, and a preallocated presentation id. It returns canonical
+an optional requested slide count, title, and a preallocated presentation id. It returns canonical
 presentation JSON and has no dependency on FastAPI, PostgreSQL, or the editor.
 The same provider boundary exposes outline generation; the local stub keeps
 both phases deterministic and offline until the gateway contract is available.
@@ -48,8 +55,9 @@ queue, persistence, polling, and editor-loading path; it is not presented as AI
 generation quality.
 
 `google-ai-studio` is an optional temporary external provider. It uses Google's
-official Gen AI SDK and a Pydantic response schema to create exactly the
-requested number of outline items. The key and model id are backend-only
+official Gen AI SDK and a nested Pydantic response schema to create structured
+story-plan items. The normal web flow lets Gemini choose the number of items;
+legacy internal outline calls may still request an exact count. The key and model id are backend-only
 environment settings. Source text is bounded before transmission, and uploaded
 assets are not included. Internal plan-to-slide rendering remains local and
 deterministic, so the editable document never depends on model-generated

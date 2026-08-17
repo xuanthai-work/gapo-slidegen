@@ -19,7 +19,7 @@ class ClaimedGeneration:
     text: str
     sections: list[dict[str, object]]
     outline: list[dict[str, object]]
-    slide_count: int
+    slide_count: int | None
     language: str
     source_kind: str
     theme_id: str
@@ -51,6 +51,7 @@ class GenerationWorker:
                 )
                 session.commit()
                 return None
+            requested_slide_count = job.payload.get("slide_count")
             claimed = ClaimedGeneration(
                 job_id=job.id,
                 owner_id=job.owner_id,
@@ -60,7 +61,11 @@ class GenerationWorker:
                 text=source.extracted_text if source else " ".join(str(item.get("content", "")) for item in outline if isinstance(item, dict)),
                 sections=source.sections if source else [],
                 outline=outline if isinstance(outline, list) else [],
-                slide_count=int(job.payload.get("slide_count", 10)),
+                slide_count=(
+                    int(requested_slide_count)
+                    if requested_slide_count is not None
+                    else None
+                ),
                 language=str(job.payload.get("language", "en")),
                 source_kind=source.kind if source else "outline",
                 theme_id=str(job.payload.get("theme_id", "modern-blue")),

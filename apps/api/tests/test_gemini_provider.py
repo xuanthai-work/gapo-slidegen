@@ -15,7 +15,7 @@ from app.generation.provider import (
 
 
 class FakeModels:
-    def __init__(self, items: list[dict[str, str]]) -> None:
+    def __init__(self, items: list[dict[str, object]]) -> None:
         self.items = items
         self.calls: list[dict[str, object]] = []
 
@@ -25,7 +25,7 @@ class FakeModels:
 
 
 class FakeClient:
-    def __init__(self, items: list[dict[str, str]]) -> None:
+    def __init__(self, items: list[dict[str, object]]) -> None:
         self.models = FakeModels(items)
 
 
@@ -58,13 +58,17 @@ def test_google_response_schema_avoids_unsupported_additional_properties() -> No
     assert "additionalProperties" not in schema
     item_schema = schema["$defs"]["GeneratedOutlineItem"]
     assert "additionalProperties" not in item_schema
+    assert set(item_schema["required"]) == {"title", "content", "layout", "blocks"}
+    block_schema = schema["$defs"]["GeneratedSlideBlock"]
+    assert "additionalProperties" not in block_schema
+    assert set(block_schema["required"]) == {"heading", "body"}
 
 
 def test_google_ai_studio_generates_owned_outline_shape_without_network() -> None:
     client = FakeClient(
         [
-            {"title": "Cloud migration", "content": ""},
-            {"title": "Current state", "content": "The source-grounded summary."},
+            {"title": "Cloud migration", "content": "A practical migration plan.", "layout": "cover", "blocks": []},
+            {"title": "Current state", "content": "The source-grounded summary.", "layout": "split-image", "blocks": []},
         ]
     )
     provider = GoogleAIStudioProvider(api_key="secret", model="chosen-model", client=client)
@@ -84,10 +88,11 @@ def test_google_ai_studio_generates_owned_outline_shape_without_network() -> Non
     assert client.models.calls[0]["model"] == "chosen-model"
     assert "Internal source text" in str(client.models.calls[0]["contents"])
     assert "Do not merely repeat" in str(client.models.calls[0]["contents"])
+    assert "not an outline" in str(client.models.calls[0]["contents"])
 
 
 def test_google_ai_studio_grounds_document_sources_without_prompt_only_policy() -> None:
-    client = FakeClient([{"title": "Report", "content": "Grounded summary"}])
+    client = FakeClient([{"title": "Report", "content": "Grounded summary", "layout": "cover", "blocks": []}])
     provider = GoogleAIStudioProvider(api_key="secret", model="chosen-model", client=client)
     provider.generate_outline(
         OutlineRequest(
@@ -108,7 +113,7 @@ def test_google_ai_studio_rejects_wrong_slide_count() -> None:
     provider = GoogleAIStudioProvider(
         api_key="secret",
         model="chosen-model",
-        client=FakeClient([{"title": "Only one", "content": ""}]),
+        client=FakeClient([{"title": "Only one", "content": "A short deck.", "layout": "cover", "blocks": []}]),
     )
     with pytest.raises(ProviderResponseError, match="exactly 2"):
         provider.generate_outline(
@@ -120,6 +125,31 @@ def test_google_ai_studio_rejects_wrong_slide_count() -> None:
                 slide_count=2,
             )
         )
+
+
+def test_google_ai_studio_can_choose_slide_count() -> None:
+    client = FakeClient(
+        [
+            {"title": "Adaptive deck", "content": "A focused introduction.", "layout": "cover", "blocks": []},
+            {"title": "One clear idea", "content": "The source only needs one supporting slide.", "layout": "split-image", "blocks": []},
+        ]
+    )
+    provider = GoogleAIStudioProvider(api_key="secret", model="chosen-model", client=client)
+
+    items = provider.generate_outline(
+        OutlineRequest(
+            title="Adaptive deck",
+            text="Explain one narrow idea.",
+            sections=[],
+            language="en",
+            slide_count=None,
+        )
+    )
+
+    assert len(items) == 2
+    prompt = str(client.models.calls[0]["contents"])
+    assert "Choose the total slide count yourself" in prompt
+    assert "Never exceed 30 slides" in prompt
 
 
 def test_google_ai_studio_renders_reviewed_outline_without_another_api_call() -> None:
@@ -144,11 +174,71 @@ def test_google_ai_studio_renders_reviewed_outline_without_another_api_call() ->
     assert [slide["title"] for slide in document["slides"]] == ["Reviewed", "Decision"]
 
 
+def test_google_ai_studio_writes_structured_blocks_into_presenton_slots() -> None:
+    client = FakeClient(
+        [
+            {
+                "title": "Trust strategy",
+                "content": "A practical plan for durable customer confidence.",
+                "layout": "cover",
+                "blocks": [],
+            },
+            {
+                "title": "Trust is built through visible actions",
+                "content": "Four coordinated practices make reliability tangible.",
+                "layout": "feature-list",
+                "blocks": [
+                    {"heading": "Set clear expectations", "body": "State what customers can rely on."},
+                    {"heading": "Show operational proof", "body": "Make service evidence easy to inspect."},
+                    {"heading": "Resolve failures openly", "body": "Explain recovery without defensive language."},
+                    {"heading": "Measure confidence", "body": "Track whether trust improves after each change."},
+                ],
+            },
+        ]
+    )
+    provider = GoogleAIStudioProvider(api_key="secret", model="chosen-model", client=client)
+
+    document = provider.generate(
+        GenerationRequest(
+            presentation_id=uuid4(),
+            title="Trust strategy",
+            text="Customers need consistent evidence before they trust a service.",
+            sections=[],
+            language="en",
+            slide_count=2,
+            theme_id="modern-blue",
+        )
+    )
+
+    card_titles = [
+        element["runs"][0]["text"]
+        for element in document["slides"][1]["elements"]
+        if str(element.get("name", "")).startswith("card_title")
+    ]
+    assert card_titles == [
+        "Set clear expectations",
+        "Show operational proof",
+        "Resolve failures openly",
+        "Measure confidence",
+    ]
+    card_bodies = [
+        element["runs"][0]["text"]
+        for element in document["slides"][1]["elements"]
+        if str(element.get("name", "")).startswith("card_description")
+    ]
+    assert card_bodies == [
+        "State what customers can rely on.",
+        "Make service evidence easy to inspect.",
+        "Explain recovery without defensive language.",
+        "Track whether trust improves after each change.",
+    ]
+
+
 def test_google_ai_studio_preserves_selected_theme_during_rendering() -> None:
     provider = GoogleAIStudioProvider(
         api_key="secret",
         model="chosen-model",
-        client=FakeClient([{"title": "Warm deck", "content": ""}]),
+        client=FakeClient([{"title": "Warm deck", "content": "A warm introduction.", "layout": "cover", "blocks": []}]),
     )
 
     document = provider.generate(

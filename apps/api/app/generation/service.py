@@ -120,7 +120,6 @@ class GenerationService:
         *,
         user: User,
         source_id: UUID,
-        slide_count: int,
         language: str,
         theme_id: str,
     ) -> GenerationJob:
@@ -131,7 +130,7 @@ class GenerationService:
             owner_id=user.id,
             source_id=source.id,
             job_type=JobType.GENERATE,
-            payload={"slide_count": slide_count, "language": language, "theme_id": theme_id},
+            payload={"language": language, "theme_id": theme_id},
         )
 
     def enqueue_outline(

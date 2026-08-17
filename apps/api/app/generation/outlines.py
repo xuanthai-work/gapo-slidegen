@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from ..models import OutlineRecord, User
 from ..sources.service import build_owned_source_query
-from .provider import OutlineProvider, OutlineRequest
+from .provider import STORY_LAYOUT_IDS, OutlineProvider, OutlineRequest
 
 
 class OutlineNotFound(ValueError):
@@ -31,6 +31,8 @@ def validate_outline_items(items: object) -> list[dict[str, object]]:
         item_id = item.get("id")
         title = item.get("title")
         content = item.get("content", "")
+        layout = item.get("layout")
+        blocks = item.get("blocks", [])
         if not isinstance(item_id, str) or not item_id.strip() or len(item_id) > 160:
             raise InvalidOutline("Every outline item requires a stable id.")
         if item_id in ids:
@@ -39,8 +41,33 @@ def validate_outline_items(items: object) -> list[dict[str, object]]:
             raise InvalidOutline("Every outline item requires a valid title.")
         if not isinstance(content, str) or len(content) > 100_000:
             raise InvalidOutline("Outline item content is invalid.")
+        if layout is not None and layout not in STORY_LAYOUT_IDS:
+            raise InvalidOutline("Outline item layout is invalid.")
+        if not isinstance(blocks, list) or len(blocks) > 6:
+            raise InvalidOutline("Outline item blocks are invalid.")
+        validated_blocks: list[dict[str, str]] = []
+        limits = {"heading": 160, "body": 600, "label": 80, "value": 80}
+        for block in blocks:
+            if not isinstance(block, dict):
+                raise InvalidOutline("Every story block must be an object.")
+            validated_block: dict[str, str] = {}
+            for key, limit in limits.items():
+                value = block.get(key, "")
+                if not isinstance(value, str) or len(value) > limit:
+                    raise InvalidOutline(f"Story block {key} is invalid.")
+                validated_block[key] = value.strip()
+            validated_blocks.append(validated_block)
         ids.add(item_id)
-        validated.append({"id": item_id, "title": title.strip(), "content": content.strip()})
+        validated_item: dict[str, object] = {
+            "id": item_id,
+            "title": title.strip(),
+            "content": content.strip(),
+        }
+        if layout is not None:
+            validated_item["layout"] = layout
+        if blocks:
+            validated_item["blocks"] = validated_blocks
+        validated.append(validated_item)
     return validated
 
 

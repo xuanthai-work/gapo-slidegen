@@ -96,6 +96,9 @@ Intentional changes:
 - Flatten Presenton groups, containers, flex rows, and grids into individually
   editable canonical elements while retaining `componentId` and
   `componentSlot` provenance metadata.
+- Map AI-authored story blocks directly into the named text slots. Sentence
+  splitting remains only as backward compatibility for legacy unstructured
+  outlines and the offline stub.
 - Convert polygon vectors to their editable rectangular bounds because the MVP
   shape schema does not yet support arbitrary vector points.
 - Replace image and icon slots with editable placeholders until generated or

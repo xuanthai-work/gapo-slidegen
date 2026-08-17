@@ -9,7 +9,11 @@ from .provider import (
     RewriteTextItem,
     SlideRewriteRequest,
 )
-from .presenton_template import MODERN_CONTENT_LAYOUT_IDS, PresentonTemplateAdapter
+from .presenton_template import (
+    MODERN_CONTENT_LAYOUT_IDS,
+    MODERN_STORY_LAYOUTS,
+    PresentonTemplateAdapter,
+)
 from .themes import get_theme
 
 
@@ -22,6 +26,11 @@ def _chunks(text: str, count: int) -> list[str]:
     size = max(1, (len(words) + count - 1) // count)
     chunks = [" ".join(words[index : index + size]) for index in range(0, len(words), size)]
     return (chunks + [""] * count)[:count]
+
+
+def _automatic_slide_count(text: str) -> int:
+    word_count = len(text.split())
+    return max(5, min(15, 4 + (word_count + 119) // 120))
 
 
 def _text_element(
@@ -164,7 +173,8 @@ class StubPresentationProvider:
         )
 
     def generate_outline(self, request: OutlineRequest) -> list[dict[str, object]]:
-        content_count = max(0, request.slide_count - 1)
+        slide_count = request.slide_count or _automatic_slide_count(request.text)
+        content_count = max(0, slide_count - 1)
         section_texts = [
             str(section.get("text", "")).strip() for section in request.sections if section.get("text")
         ]
@@ -462,13 +472,21 @@ class StubPresentationProvider:
                 )
             ]
             for index, item in enumerate(outline[1:], start=1):
+                requested_layout = MODERN_STORY_LAYOUTS.get(str(item.get("layout") or ""))
+                blocks = item.get("blocks")
                 slides.append(
                     adapter.compile_slide(
-                        MODERN_CONTENT_LAYOUT_IDS[(index - 1) % len(MODERN_CONTENT_LAYOUT_IDS)],
+                        requested_layout
+                        or MODERN_CONTENT_LAYOUT_IDS[(index - 1) % len(MODERN_CONTENT_LAYOUT_IDS)],
                         title=str(item.get("title") or f"Key point {index}"),
                         content=str(item.get("content") or ""),
                         slide_index=index,
                         slide_count=len(outline),
+                        blocks=(
+                            [block for block in blocks if isinstance(block, dict)]
+                            if isinstance(blocks, list)
+                            else None
+                        ),
                     )
                 )
             return {

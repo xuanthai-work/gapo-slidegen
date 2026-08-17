@@ -44,6 +44,37 @@ def test_outline_validation_rejects_empty_duplicate_and_oversized_input() -> Non
         )
 
 
+def test_outline_validation_preserves_structured_story_blocks() -> None:
+    items = validate_outline_items(
+        [
+            {
+                "id": "slide-1",
+                "title": "A deliberate message",
+                "content": "A concise slide takeaway.",
+                "layout": "feature-grid",
+                "blocks": [
+                    {
+                        "heading": "Designed headline",
+                        "body": "A complete supporting thought.",
+                        "label": "",
+                        "value": "",
+                    }
+                ],
+            }
+        ]
+    )
+
+    assert items[0]["layout"] == "feature-grid"
+    assert items[0]["blocks"] == [
+        {
+            "heading": "Designed headline",
+            "body": "A complete supporting thought.",
+            "label": "",
+            "value": "",
+        }
+    ]
+
+
 def test_outline_queries_filter_owner_and_revision() -> None:
     outline_id = uuid4()
     owner_id = uuid4()
