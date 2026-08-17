@@ -54,10 +54,12 @@ export function AuthScreen() {
 
   return (
     <main className="auth-page">
+      <a className="u-skip-link" href="#auth-form">Skip to form</a>
+
       <section className="auth-intro" aria-label="Product introduction">
         <div className="brand-mark"><PresentationChart size={23} weight="fill" /></div>
         <p className="eyebrow">Gapo SlideGen</p>
-        <h1>Bring your knowledge to the world.</h1>
+        <h1 className="auth-intro__heading">Bring your knowledge to the world.</h1>
         <p className="auth-intro__copy">
           Start with a prompt, a finished manuscript, or an existing office document. Keep every
           slide editable through review and export.
@@ -73,14 +75,16 @@ export function AuthScreen() {
         <div className="auth-card">
           <div className="auth-card__icon"><Sparkle size={20} weight="fill" /></div>
           <p className="eyebrow">Internal workspace</p>
-          <h2>{mode === "login" ? "Welcome back" : "Create your account"}</h2>
+          <h2 className="auth-card__heading">
+            {mode === "login" ? "Welcome back" : "Create your account"}
+          </h2>
           <p className="auth-card__subtitle">
             {mode === "login"
               ? "Sign in with your work email to continue."
               : "Email verification is not required for this MVP."}
           </p>
 
-          <form className="auth-form" onSubmit={submit}>
+          <form id="auth-form" className="auth-form" onSubmit={submit}>
             <label htmlFor="email">Email</label>
             <input
               id="email"
