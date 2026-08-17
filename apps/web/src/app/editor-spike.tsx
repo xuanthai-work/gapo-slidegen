@@ -36,6 +36,7 @@ import { ApiError, apiFetch, type StoredAsset, type StoredPresentation } from ".
 import { ToastProvider } from "./components/toast-provider";
 import { useToast } from "./components/use-toast";
 import { CommandPaletteTrigger } from "./components/command-palette-trigger";
+import { SlideThumbnail } from "./components/slide-thumbnail";
 import type { CommandAction } from "./components/command-palette";
 
 const SlideCanvas = dynamic(() => import("./editor-canvas"), { ssr: false });
@@ -920,11 +921,8 @@ function EditorWorkspace({ presentationId }: { presentationId: string | undefine
                       }}
                     >
                       <span className="thumbnail__number">{index + 1}</span>
-                      <span className="thumbnail__preview" style={{ backgroundColor: item.background ?? document.theme.colors.surface }}>
-                        <span className="thumbnail__preview-band" style={{ backgroundColor: document.theme.colors.primary }} />
-                        <span className="thumbnail__preview-heading" style={{ backgroundColor: document.theme.colors.text }} />
-                        <span className="thumbnail__preview-line" style={{ backgroundColor: document.theme.colors.text }} />
-                        <span className="thumbnail__preview-line" style={{ backgroundColor: document.theme.colors.text, opacity: 0.55 }} />
+                      <span className="thumbnail__preview">
+                        <SlideThumbnail slide={item} resolveAssetUrl={resolveAssetUrl} />
                       </span>
                     </button>
                     {index === activeSlideIndex ? (
