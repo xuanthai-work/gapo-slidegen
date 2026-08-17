@@ -11,7 +11,7 @@ const browser = await chromium.launch();
 const authContext = await browser.newContext({ viewport: { width: 1280, height: 800 } });
 const authPage = await authContext.newPage();
 
-// Context 2: authenticated via registration, for dashboard screens
+// Context 2: authenticated via registration, for dashboard + editor screens
 const dashContext = await browser.newContext({ viewport: { width: 1280, height: 800 } });
 const dashPage = await dashContext.newPage();
 
@@ -58,6 +58,49 @@ for (const target of dashTargets) {
   await dashPage.screenshot({ path: path.join(OUT, target.name), fullPage: false });
   console.log(`  saved ${target.name}`);
 }
+
+// Generate a presentation and capture editor/present/palette/toast states
+console.log("Generating a presentation for editor captures…");
+await dashPage.goto("http://localhost:3000/");
+await dashPage.waitForSelector("#composer-text", { timeout: 10_000 });
+await dashPage.locator("#composer-text").fill("visual regression topic");
+await dashPage.getByRole("button", { name: /generate presentation/i }).click();
+await dashPage.waitForURL(/\/editor\?presentation=/, { timeout: 30_000 });
+await dashPage.waitForSelector('aside[aria-label="Slides"] .thumbnail', { timeout: 10_000 });
+await dashPage.waitForTimeout(800);
+
+// 05-editor-shell.png — already on editor page
+console.log("Capturing 05-editor-shell.png…");
+await dashPage.waitForTimeout(800);
+await dashPage.screenshot({ path: path.join(OUT, "05-editor-shell.png"), fullPage: false });
+console.log("  saved 05-editor-shell.png");
+
+// 06-editor-present-mode.png
+console.log("Capturing 06-editor-present-mode.png…");
+await dashPage.getByRole("button", { name: /present/i }).click();
+await dashPage.waitForSelector('section[aria-label="Presentation mode"]', { timeout: 10_000 });
+await dashPage.waitForTimeout(500);
+await dashPage.screenshot({ path: path.join(OUT, "06-editor-present-mode.png"), fullPage: false });
+console.log("  saved 06-editor-present-mode.png");
+await dashPage.keyboard.press("Escape");
+await dashPage.waitForSelector('section[aria-label="Presentation mode"]', { state: "hidden", timeout: 5_000 });
+
+// Capture command palette open
+console.log("Capturing 07-editor-command-palette.png…");
+await dashPage.keyboard.press("Control+k");
+await dashPage.waitForSelector('[role="dialog"][aria-label="Command palette"]', { timeout: 5_000 });
+await dashPage.waitForTimeout(800);
+await dashPage.screenshot({ path: path.join(OUT, "07-editor-command-palette.png"), fullPage: false });
+console.log("  saved 07-editor-command-palette.png");
+await dashPage.keyboard.press("Escape");
+
+// Capture toast notification
+console.log("Capturing 08-editor-toast.png…");
+await dashPage.getByRole("button", { name: /export pptx/i }).click();
+await dashPage.waitForSelector(".toast-region", { timeout: 10_000 });
+await dashPage.waitForTimeout(400);
+await dashPage.screenshot({ path: path.join(OUT, "08-editor-toast.png"), fullPage: false });
+console.log("  saved 08-editor-toast.png");
 
 await browser.close();
 console.log("Visual baselines captured.");
