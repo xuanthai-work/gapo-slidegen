@@ -13,7 +13,7 @@ export function Skeleton({
   radius = "var(--radius-sm)",
   className = "",
 }: SkeletonProps) {
-  const style: CSSProperties = {
+  const style = {
     "--skeleton-width": width,
     "--skeleton-height": height,
     "--skeleton-radius": radius,
@@ -21,6 +21,6 @@ export function Skeleton({
     height: "var(--skeleton-height)",
     borderRadius: "var(--skeleton-radius)",
     display: "block",
-  };
+  } as CSSProperties;
   return <div className={`u-shimmer ${className}`.trim()} style={style} aria-hidden="true" />;
 }
