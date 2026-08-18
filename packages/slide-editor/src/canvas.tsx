@@ -11,6 +11,7 @@ import {
   type ShapeElement,
   type SlideElement,
 } from "@gapo-slidegen/slide-schema";
+import { svgDataUrl } from "./svg";
 
 export type SlideCanvasProps = {
   elements: SlideElement[];
@@ -55,20 +56,29 @@ function ElementNode({
 }) {
   const [loadedImage, setLoadedImage] = useState<HTMLImageElement | null>(null);
   const assetId = element.type === "image" ? element.assetId : null;
+  const svgMarkup = element.type === "svg" ? element.svg : null;
   useEffect(() => {
-    if (!assetId || !resolveAssetUrl) {
+    if (!assetId && !svgMarkup) {
       setLoadedImage(null);
       return;
     }
     const image = new window.Image();
     image.onload = () => setLoadedImage(image);
     image.onerror = () => setLoadedImage(null);
-    image.src = resolveAssetUrl(assetId);
+    if (assetId) {
+      if (!resolveAssetUrl) {
+        setLoadedImage(null);
+        return;
+      }
+      image.src = resolveAssetUrl(assetId);
+    } else if (svgMarkup) {
+      image.src = svgDataUrl(svgMarkup);
+    }
     return () => {
       image.onload = null;
       image.onerror = null;
     };
-  }, [assetId, resolveAssetUrl]);
+  }, [assetId, svgMarkup, resolveAssetUrl]);
 
   const common = {
     id: element.id,
@@ -188,6 +198,13 @@ function ElementNode({
         {...(element.stroke ? { stroke: element.stroke.color } : {})}
       />
     );
+  }
+
+  if (element.type === "svg") {
+    if (!loadedImage) {
+      return <Rect {...common} fill="#F5F8FE" stroke="#DCE5F5" strokeWidth={2} />;
+    }
+    return <KonvaImage {...common} image={loadedImage} />;
   }
 
   if (element.type === "image") {

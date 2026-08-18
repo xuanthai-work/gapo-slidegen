@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { svgDataUrl } from "@gapo-slidegen/slide-editor/svg";
 import {
   EDITOR_STAGE_HEIGHT,
   EDITOR_STAGE_WIDTH,
@@ -105,6 +106,21 @@ function ThumbnailElement({
         element={element}
         style={style}
         resolveAssetUrl={resolveAssetUrl}
+      />
+    );
+  }
+
+  if (element.type === "svg") {
+    return (
+      <img
+        src={svgDataUrl(element.svg)}
+        alt={element.alt}
+        loading="lazy"
+        draggable={false}
+        style={{
+          ...style,
+          objectFit: "contain",
+        }}
       />
     );
   }

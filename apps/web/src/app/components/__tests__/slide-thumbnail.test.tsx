@@ -76,6 +76,26 @@ describe("SlideThumbnail", () => {
     );
   });
 
+  it("renders an inline svg element", () => {
+    const slide = makeSlide([
+      {
+        id: "icon",
+        type: "svg",
+        position: { x: 0, y: 0 },
+        size: { width: 120, height: 120 },
+        rotation: 0,
+        opacity: 1,
+        locked: false,
+        decorative: true,
+        svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256"><circle cx="128" cy="128" r="96" fill="none" stroke="currentColor" stroke-width="16"/></svg>',
+        alt: "Workflow icon",
+      },
+    ]);
+    render(<SlideThumbnail slide={slide} />);
+    const icon = screen.getByAltText("Workflow icon");
+    expect(icon).toHaveAttribute("src", expect.stringContaining("data:image/svg+xml"));
+  });
+
   it("falls back to a placeholder when resolveAssetUrl is missing", () => {
     const slide = makeSlide([
       {
