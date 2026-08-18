@@ -4,6 +4,7 @@ from .gemini_image_provider import GoogleAIStudioImageProvider
 from .provider import ProviderConfigurationError
 from .stages.asset_planner import StubAssetPlanner
 from .stages.content_generator import ThemeDispatchContentGenerator
+from .stages.content_understanding import build_content_understanding
 from .stages.orchestrator import GenerationPipeline, NullAssetGenerator
 from .stub_provider import StubPresentationProvider
 
@@ -54,9 +55,11 @@ def _build_story_planner():
 
 def build_story_provider() -> GenerationPipeline:
     """Build the full generation pipeline used by the worker."""
+    story_planner = _build_story_planner()
     return GenerationPipeline(
-        story_planner=_build_story_planner(),
+        story_planner=story_planner,
         content_generator=ThemeDispatchContentGenerator(),
+        content_understanding=build_content_understanding(story_planner),
         asset_planner=StubAssetPlanner(),
         asset_generator=NullAssetGenerator(),
     )

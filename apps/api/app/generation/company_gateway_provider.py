@@ -57,9 +57,9 @@ class CompanyGatewayProvider:
         self.max_input_chars = max_input_chars
         self.client = client
 
-    def _chat(self, *, system: str, user: str) -> str:
+    def _chat(self, *, system: str, user: str, timeout: httpx.Timeout | None = None) -> str:
         owns_client = self.client is None
-        client = self.client or httpx.Client(timeout=httpx.Timeout(180))
+        client = self.client or httpx.Client(timeout=timeout or httpx.Timeout(180))
         try:
             for attempt in range(3):
                 try:
@@ -103,7 +103,11 @@ class CompanyGatewayProvider:
                 client.close()
         raise ProviderResponseError("Company gateway request failed after retries.")
 
-    def generate_outline(self, request: OutlineRequest) -> list[dict[str, object]]:
+    def generate_outline(
+        self,
+        request: OutlineRequest,
+        understanding: dict[str, object] | None = None,
+    ) -> list[dict[str, object]]:
         schema = json.dumps(GeneratedOutlineResponse.model_json_schema(), ensure_ascii=False)
         content = self._chat(
             system=(
@@ -111,7 +115,11 @@ class CompanyGatewayProvider:
                 "provided schema. Never wrap JSON in Markdown."
             ),
             user=(
-                build_story_prompt(request, max_input_chars=self.max_input_chars)
+                build_story_prompt(
+                    request,
+                    max_input_chars=self.max_input_chars,
+                    understanding=understanding,
+                )
                 + "\nReturn JSON matching this schema exactly:\n"
                 + schema
             ),

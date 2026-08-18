@@ -23,6 +23,10 @@ from .content_generator import (
     ThemeDispatchContentGenerator,
     build_content_generator,
 )
+from .content_understanding import (
+    StubContentUnderstanding,
+    build_content_understanding,
+)
 from .orchestrator import GenerationPipeline
 from .protocols import (
     AssetGenerator,
@@ -41,9 +45,11 @@ __all__ = [
     "AssetSlot",
     "AssetSlotKind",
     "build_content_generator",
+    "build_content_understanding",
     "ContentGenerator",
     "ContentUnderstanding",
     "ContentUnderstandingResult",
+    "StubContentUnderstanding",
     "GeneratedAsset",
     "GenerationPipeline",
     "ImageAssetGenerator",

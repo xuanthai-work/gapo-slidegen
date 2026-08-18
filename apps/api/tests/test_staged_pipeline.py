@@ -16,7 +16,12 @@ from app.generation.stages.orchestrator import NullAssetPlanner
 class FakeStoryPlanner:
     name = "fake-story"
 
-    def generate_outline(self, request: OutlineRequest) -> list[dict[str, object]]:
+    def generate_outline(
+        self,
+        request: OutlineRequest,
+        understanding: dict[str, object] | None = None,
+    ) -> list[dict[str, object]]:
+        del understanding
         return [
             {"id": "cover", "title": request.title, "content": ""},
             {"id": "point-1", "title": "Point one", "content": "First takeaway."},

@@ -33,7 +33,12 @@ class StubPresentationProvider:
             "AI rewrite is unavailable with the local stub provider. Configure an AI provider first."
         )
 
-    def generate_outline(self, request: OutlineRequest) -> list[dict[str, object]]:
+    def generate_outline(
+        self,
+        request: OutlineRequest,
+        understanding: dict[str, object] | None = None,
+    ) -> list[dict[str, object]]:
+        del understanding
         slide_count = request.slide_count or _automatic_slide_count(request.text)
         content_count = max(0, slide_count - 1)
         section_texts = [

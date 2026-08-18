@@ -2,6 +2,7 @@ from typing import Mapping
 
 from ..provider import GenerationRequest, OutlineRequest
 from .models import AssetPlan, GeneratedAsset, StoryOutline
+from .content_understanding import StubContentUnderstanding
 from .protocols import (
     AssetGenerator,
     AssetPlanner,
@@ -52,14 +53,35 @@ class GenerationPipeline:
     ) -> None:
         self.story_planner = story_planner
         self.content_generator = content_generator
-        self.content_understanding = content_understanding
+        self.content_understanding = content_understanding or StubContentUnderstanding()
         self.layout_selector = layout_selector
         self.asset_planner = asset_planner or NullAssetPlanner()
         self.asset_generator = asset_generator or NullAssetGenerator()
         self.name = story_planner.name
 
     def generate_outline(self, request: OutlineRequest) -> list[dict[str, object]]:
-        return self.story_planner.generate_outline(request)
+        understanding: dict[str, object] | None = None
+        if self.content_understanding is not None:
+            try:
+                result = self.content_understanding.understand(
+                    title=request.title,
+                    text=request.text,
+                    sections=request.sections,
+                    language=request.language,
+                    source_kind=request.source_kind,
+                )
+                if result is not None:
+                    understanding = {
+                        "intent": result.intent,
+                        "audience": result.audience,
+                        "tone": result.tone,
+                        "key_takeaways": result.key_takeaways,
+                    }
+            except Exception:
+                # Content understanding is optional; falling back keeps generation
+                # robust even if the chat provider is slow or unavailable.
+                pass
+        return self.story_planner.generate_outline(request, understanding=understanding)
 
     def plan_assets(
         self,

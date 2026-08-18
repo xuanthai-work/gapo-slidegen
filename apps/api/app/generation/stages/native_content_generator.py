@@ -206,6 +206,9 @@ def _content_slide(
     theme_id: str,
     colors: dict[str, str],
     fonts: dict[str, str],
+    *,
+    role: str | None = None,
+    blocks: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
     body_size = _body_font_size(body)
     title_size = _title_font_size(title, 42)
@@ -215,7 +218,11 @@ def _content_slide(
         "midnight-signal": ("split", "band", "margin", "frame", "statement", "header"),
     }
     order = orders.get(theme_id, orders["editorial-cobalt"])
-    if len(body) > 720:
+    if role == "big-stat" or role == "quote":
+        variant = "statement"
+    elif role in {"cover", "cta"}:
+        variant = "band"
+    elif len(body) > 720:
         variant = "header"
     else:
         variant = order[(index - 1) % len(order)]
@@ -232,6 +239,19 @@ def _content_slide(
             _shape(x=84, y=286, width=12, height=334, color=colors["accent"], radius=6, name="Accent rail"),
             _text_element(body, x=132, y=286, width=1010, height=350, size=body_size, color=light_text, family=fonts["body"], line_height=1.32, name="Body"),
         ]
+        if blocks:
+            for block_index, block in enumerate(blocks[:3]):
+                block_heading = str(block.get("heading") or "").strip()
+                block_body = str(block.get("body") or "").strip()
+                y_base = 286 + (block_index + 1) * 110
+                if block_heading:
+                    elements.append(
+                        _text_element(block_heading, x=132, y=y_base, width=1010, height=28, size=18, color=light_text, family=fonts["heading"], bold=True, line_height=1.1, name=f"Block {block_index + 1} heading")
+                    )
+                if block_body:
+                    elements.append(
+                        _text_element(block_body, x=132, y=y_base + 30, width=1010, height=70, size=16, color=light_text, family=fonts["body"], line_height=1.2, name=f"Block {block_index + 1} body")
+                    )
     elif variant == "split":
         background = colors["background"]
         elements = [
@@ -291,14 +311,10 @@ class NativeContentGenerator:
 
     name = "native"
 
-    def render(
+    def _render_theme(
         self,
         request: GenerationRequest,
-        outline: StoryOutline,
-        *,
-        assets: Mapping[tuple[int, str], str],
-    ) -> dict[str, object]:
-        del assets  # native layouts do not support auto asset injection yet
+    ) -> tuple[dict[str, object], dict[str, str], dict[str, str]]:
         theme = get_theme(request.theme_id)
         colors = theme["colors"]
         fonts = theme["fonts"]
@@ -306,9 +322,21 @@ class NativeContentGenerator:
             raise ValueError("Theme configuration is invalid")
         palette = {key: str(value) for key, value in colors.items()}
         typography = {key: str(value) for key, value in fonts.items()}
+        return theme, palette, typography
+
+    def render_slides(
+        self,
+        request: GenerationRequest,
+        outline: StoryOutline,
+        *,
+        assets: Mapping[tuple[int, str], str],
+    ) -> list[dict[str, object]]:
+        del assets  # native layouts do not support auto asset injection yet
+        theme, palette, typography = self._render_theme(request)
         items = outline.items
         title_item = items[0] if items else StoryOutlineItem(id=str(uuid4()), title=request.title, content="")
-        slides = [
+        slides: list[dict[str, object]] = []
+        slides.append(
             _cover_slide(
                 title_item.title,
                 title_item.content,
@@ -316,7 +344,7 @@ class NativeContentGenerator:
                 palette,
                 typography,
             )
-        ]
+        )
         for index, item in enumerate(items[1:], start=1):
             slides.append(
                 _content_slide(
@@ -327,8 +355,21 @@ class NativeContentGenerator:
                     str(theme["id"]),
                     palette,
                     typography,
+                    role=item.role,
+                    blocks=item.blocks,
                 )
             )
+        return slides
+
+    def render(
+        self,
+        request: GenerationRequest,
+        outline: StoryOutline,
+        *,
+        assets: Mapping[tuple[int, str], str],
+    ) -> dict[str, object]:
+        theme, _, _ = self._render_theme(request)
+        slides = self.render_slides(request, outline, assets=assets)
         return {
             "id": str(request.presentation_id),
             "schemaVersion": 1,

@@ -124,10 +124,30 @@ class JobRepository:
         job.progress = progress
         self.session.flush()
 
+    def update_stream(self, job: GenerationJob, *, stage: str, message: str, slides: list[dict[str, object]] | None = None) -> None:
+        if job.status is not JobStatus.RUNNING:
+            raise InvalidJobTransition("Only running jobs can report stream updates.")
+        # Build a fresh dict so SQLAlchemy JSONB tracking always sees a change.
+        stream: dict[str, object] = {}
+        existing = job.stream_data if isinstance(job.stream_data, dict) else None
+        if existing is not None:
+            stream.update(existing)
+        stream["stage"] = stage
+        stream["message"] = message
+        if slides is not None:
+            stream["slides"] = slides
+        job.stream_data = stream
+        self.session.flush()
+
+    def clear_stream(self, job: GenerationJob) -> None:
+        job.stream_data = None
+        self.session.flush()
+
     def succeed(self, job: GenerationJob, result: dict[str, object]) -> None:
         transition(job, JobStatus.SUCCEEDED)
         job.progress = 100
         job.result = result
+        job.stream_data = None
         self.session.flush()
 
     def fail(self, job: GenerationJob, *, code: str, message: str) -> None:

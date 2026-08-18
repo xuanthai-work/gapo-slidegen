@@ -1,7 +1,10 @@
+import asyncio
+import json
 from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy.orm import Session
 
@@ -368,6 +371,77 @@ def cancel_job(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
     except JobConflict as error:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+
+
+@router.get("/v1/jobs/{job_id}/events")
+async def stream_job_events(
+    job_id: UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[GenerationService, Depends(get_generation_service)],
+) -> StreamingResponse:
+    """Stream job progress updates as Server-Sent Events.
+
+    The endpoint polls the job record in the background and emits a
+    ``progress`` event whenever the status or progress changes. While the job
+    is running it also emits ``slide`` events whenever the worker adds a new
+    slide to ``stream_data``, so the dashboard can show a live preview.
+    """
+    heartbeat_seconds = 25
+    poll_seconds = 0.2
+    terminal_statuses = {"succeeded", "failed", "canceled"}
+
+    async def event_generator():
+        last_payload: str | None = None
+        last_stream_slide_count = 0
+        elapsed_heartbeat = 0.0
+        while True:
+            # Expire the in-memory object so each poll reads fresh DB state; otherwise
+            # SQLAlchemy returns the cached job from the first SSE request snapshot.
+            await asyncio.to_thread(service.session.expire_all)
+            job = await asyncio.to_thread(service.get_job, job_id, user)
+            if job is None:
+                payload = json.dumps({"detail": "Job not found."})
+                if payload != last_payload:
+                    yield f"event: error\ndata: {payload}\n\n"
+                break
+            payload = JobView.model_validate(job).model_dump_json()
+            if payload != last_payload:
+                last_payload = payload
+                yield f"event: progress\ndata: {payload}\n\n"
+
+            stream = job.stream_data if isinstance(job.stream_data, dict) else None
+            stream_slides = stream.get("slides") if stream else None
+            if isinstance(stream_slides, list) and len(stream_slides) > last_stream_slide_count:
+                last_stream_slide_count = len(stream_slides)
+                stream_payload = json.dumps(
+                    {
+                        "stage": stream.get("stage") if stream else "rendering",
+                        "message": stream.get("message") if stream else "Building slides...",
+                        "slide_count": len(stream_slides),
+                        "latest_slide": stream_slides[-1] if stream_slides else None,
+                        "slides": stream_slides,
+                    },
+                    ensure_ascii=False,
+                )
+                yield f"event: slide\ndata: {stream_payload}\n\n"
+
+            if job.status.value in terminal_statuses:
+                break
+            await asyncio.sleep(poll_seconds)
+            elapsed_heartbeat += poll_seconds
+            if elapsed_heartbeat >= heartbeat_seconds:
+                yield ":heartbeat\n\n"
+                elapsed_heartbeat = 0.0
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/v1/presentations/{presentation_id}", response_model=PresentationView)

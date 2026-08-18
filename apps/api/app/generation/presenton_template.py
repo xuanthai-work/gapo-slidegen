@@ -4,7 +4,7 @@ import json
 import re
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Literal, Mapping
 from uuid import uuid4
 
 
@@ -28,28 +28,99 @@ MODERN_STORY_LAYOUTS = {
     "highlight-metrics": "title_image_description_list_with_highlighted_text_heading_description",
 }
 
+# Layout shape hints help the selector pick a template that matches the actual
+# content produced by the story planner.
+LayoutShape = Literal[
+    "cover",
+    "text_only",
+    "text_with_media",
+    "two_column_text",
+    "grid_cards",
+    "metric_stack",
+    "index_grid",
+]
+
+
+# Maps a Presenton layout id to its visual shape. The selector uses this to
+# decide whether a layout fits the slide's blocks and asset availability.
+LAYOUT_SHAPES: dict[str, LayoutShape] = {
+    "title_slide": "cover",
+    "table_of_contents": "index_grid",
+    "section_header": "text_only",
+    "title_description_bullet_points_grid_with_icon": "grid_cards",
+    "title_description_bullet_points_list_with_icon": "two_column_text",
+    "title_description_image": "text_with_media",
+    "title_description_chart": "text_with_media",
+    "title_description_chart_table": "text_with_media",
+    "title_list_of_cards_with_alternating_image": "grid_cards",
+    "title_list_of_cards_with_image": "grid_cards",
+    "title_image_description_list_with_highlighted_text_heading_description": "metric_stack",
+}
+
+
 # Semantic slide role -> preferred Presenton layout ids. The renderer tries
 # these ids in order and falls back to the legacy story layout mapping when
 # none are available.
 ROLE_LAYOUT_CANDIDATES: dict[str, tuple[str, ...]] = {
     "cover": ("title_slide",),
-    "agenda": ("table_of_contents",),
-    "section": ("section_header",),
+    "agenda": ("table_of_contents", "title_description_bullet_points_list_with_icon"),
+    "section": ("section_header", "title_description_bullet_points_list_with_icon"),
     "hook": ("title_description_image", "title_slide"),
     "problem": ("title_description_image", "title_description_bullet_points_list_with_icon"),
     "solution": ("title_description_image", "title_description_bullet_points_grid_with_icon"),
-    "big-stat": ("title_image_description_list_with_highlighted_text_heading_description",),
-    "comparison": ("title_description_image", "title_description_bullet_points_grid_with_icon"),
-    "process": ("title_description_bullet_points_list_with_icon",),
-    "timeline": ("title_description_bullet_points_list_with_icon",),
-    "features": ("title_description_bullet_points_grid_with_icon",),
-    "case-study": ("title_list_of_cards_with_image", "title_list_of_cards_with_alternating_image"),
-    "quote": ("quote_slide",),
-    "team": ("title_list_of_cards_with_image",),
-    "cta": ("closing_slide", "title_slide"),
-    "summary": ("title_description_bullet_points_list_with_icon",),
-    "content": ("title_description_bullet_points_list_with_icon",),
+    "big-stat": (
+        "title_image_description_list_with_highlighted_text_heading_description",
+        "title_description_bullet_points_grid_with_icon",
+        "title_description_chart",
+    ),
+    "comparison": (
+        "title_description_bullet_points_grid_with_icon",
+        "title_description_image",
+        "title_description_bullet_points_list_with_icon",
+    ),
+    "process": ("title_description_bullet_points_list_with_icon", "title_description_image"),
+    "timeline": ("title_description_bullet_points_list_with_icon", "title_description_image"),
+    "features": (
+        "title_description_bullet_points_grid_with_icon",
+        "title_list_of_cards_with_image",
+        "title_description_bullet_points_list_with_icon",
+    ),
+    "case-study": (
+        "title_list_of_cards_with_image",
+        "title_list_of_cards_with_alternating_image",
+        "title_description_image",
+    ),
+    "quote": ("title_description_image", "title_slide"),
+    "team": ("title_list_of_cards_with_image", "title_list_of_cards_with_alternating_image"),
+    "cta": ("title_description_image", "title_slide"),
+    "summary": (
+        "title_description_bullet_points_list_with_icon",
+        "title_description_bullet_points_grid_with_icon",
+    ),
+    "content": (
+        "title_description_bullet_points_list_with_icon",
+        "title_description_bullet_points_grid_with_icon",
+    ),
 }
+
+
+def _layout_shape(layout_id: str) -> LayoutShape:
+    return LAYOUT_SHAPES.get(layout_id, "text_only")
+
+
+def _has_media_slot(layout_id: str) -> bool:
+    """Return True if the layout reserves a panel for image/chart media."""
+    return _layout_shape(layout_id) in {"text_with_media", "metric_stack"}
+
+
+def _has_metric_slots(layout_id: str) -> bool:
+    """Return True if the layout exposes metric_label/metric_value slots."""
+    return _layout_shape(layout_id) == "metric_stack"
+
+
+def _is_card_grid(layout_id: str) -> bool:
+    return _layout_shape(layout_id) == "grid_cards"
+
 
 
 def _number(value: object, default: float = 0) -> float:
@@ -113,14 +184,31 @@ class _ContentSlots:
         *,
         cover: bool,
         blocks: list[dict[str, object]] | None = None,
+        role: str | None = None,
+        budgets: dict[str, int] | None = None,
     ) -> None:
         self.title = title
         self.content = content
         self.cover = cover
+        self.role = role or "content"
         self.points = _content_points(content)
         self.structured = blocks is not None
         self.blocks = blocks or []
         self.counts: dict[str, int] = {}
+        self.budgets = budgets or {}
+
+    def _respect_budget(self, text: str, field: str) -> str:
+        limit = self.budgets.get(field)
+        if limit is None:
+            return text
+        # Soft truncation: prefer whole words, but never exceed the limit.
+        if len(text) <= limit:
+            return text
+        truncated = text[:limit]
+        last_space = truncated.rfind(" ")
+        if last_space > limit * 0.7:
+            truncated = truncated[:last_space]
+        return truncated.rstrip(" .,;:-") + "..." if len(text) > 3 else text[:limit]
 
     def _next(self, name: str) -> tuple[str, int]:
         index = self.counts.get(name, 0)
@@ -135,9 +223,9 @@ class _ContentSlots:
         name = _normalized_name(name_value)
         if self.cover:
             if name == "primary_heading":
-                return self.title
+                return self._respect_budget(self.title, "title_max_chars")
             if name == "supporting_paragraph":
-                return self.content
+                return self._respect_budget(self.content, "content_max_chars")
             if name == "badge_initials":
                 return "AI"
             if name == "card_primary_text":
@@ -155,9 +243,9 @@ class _ContentSlots:
             "header_text",
         }
         if name in title_slots:
-            return self.title
+            return self._respect_budget(self.title, "title_max_chars")
         if name in {"supporting_paragraph", "body_paragraph", "intro_paragraph", "stack_body"}:
-            return self.content
+            return self._respect_budget(self.content, "content_max_chars")
         point, index = self._next(name)
         block = self.blocks[index] if index < len(self.blocks) else {}
         block_heading = str(block.get("heading") or "").strip()
@@ -168,13 +256,25 @@ class _ContentSlots:
         if any(token in name for token in ("number", "badge")):
             return str(index + 1).zfill(2)
         if "metric_label" in name:
-            return block_label or ("" if self.structured else f"KEY POINT {index + 1:02d}")
+            return self._respect_budget(
+                block_label or ("" if self.structured else f"KEY POINT {index + 1:02d}"),
+                "block_heading_max_chars",
+            )
         if "metric_value" in name:
-            return block_value or block_heading or ("" if self.structured else heading)
+            return self._respect_budget(
+                block_value or block_heading or ("" if self.structured else heading),
+                "block_body_max_chars",
+            )
         if any(token in name for token in ("description", "caption", "body")):
-            return block_body or ("" if self.structured else description or point)
+            return self._respect_budget(
+                block_body or ("" if self.structured else description or point),
+                "block_body_max_chars",
+            )
         if any(token in name for token in ("title", "heading", "text")):
-            return block_heading or ("" if self.structured else heading or point)
+            return self._respect_budget(
+                block_heading or ("" if self.structured else heading or point),
+                "block_heading_max_chars",
+            )
         return original
 
 
@@ -213,6 +313,8 @@ class PresentonTemplateAdapter:
         slide_count: int,
         blocks: list[dict[str, object]] | None = None,
         assets: Mapping[str, str] | None = None,
+        role: str | None = None,
+        budgets: dict[str, int] | None = None,
     ) -> dict[str, object]:
         try:
             layout = self.layouts[layout_id]
@@ -226,6 +328,8 @@ class PresentonTemplateAdapter:
             content,
             cover=layout_id == "title_slide",
             blocks=blocks,
+            role=role,
+            budgets=budgets,
         )
         self.slide_index = slide_index
         self.slide_count = slide_count

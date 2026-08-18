@@ -74,6 +74,7 @@ class GenerationJob(Base):
     progress: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, default=dict)
     result: Mapped[dict[str, object] | None] = mapped_column(JSONB)
+    stream_data: Mapped[dict[str, object] | None] = mapped_column(JSONB)
     error_code: Mapped[str | None] = mapped_column(String(100))
     error_message: Mapped[str | None] = mapped_column(Text)
     attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

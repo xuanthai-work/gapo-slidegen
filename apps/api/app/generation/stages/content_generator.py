@@ -29,6 +29,21 @@ class ThemeDispatchContentGenerator:
 
     name = "dispatch"
 
+    def _delegate(
+        self,
+        request: GenerationRequest,
+    ) -> NativeContentGenerator | PresentonContentGenerator:
+        return build_content_generator(request.theme_id)
+
+    def render_slides(
+        self,
+        request: GenerationRequest,
+        outline: StoryOutline,
+        *,
+        assets: dict[tuple[int, str], str],
+    ) -> list[dict[str, object]]:
+        return self._delegate(request).render_slides(request, outline, assets=assets)
+
     def render(
         self,
         request: GenerationRequest,
@@ -36,6 +51,4 @@ class ThemeDispatchContentGenerator:
         *,
         assets: dict[tuple[int, str], str],
     ) -> dict[str, object]:
-        return build_content_generator(request.theme_id).render(
-            request, outline, assets=assets
-        )
+        return self._delegate(request).render(request, outline, assets=assets)

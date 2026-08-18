@@ -1,3 +1,4 @@
+import logging
 from dataclasses import dataclass, replace
 from time import sleep
 from uuid import UUID, uuid4
@@ -13,6 +14,71 @@ from .provider import GenerationRequest, OutlineRequest, ProviderConfigurationEr
 from .stages.asset_generator import ImageAssetGenerator
 from .stages.models import StoryOutline
 from .stages.orchestrator import GenerationPipeline
+
+
+class _StreamTracker:
+    """Updates a running job's progress and streaming preview data."""
+
+    def __init__(self, session_factory: sessionmaker[Session], job_id: UUID, language: str) -> None:
+        self._session_factory = session_factory
+        self._job_id = job_id
+        self._language = language
+
+    def _update(self, *, progress: int, stage: str, message: str, slides: list[dict[str, object]] | None = None) -> None:
+        with self._session_factory() as session:
+            job = session.get(GenerationJob, self._job_id)
+            if job is not None and job.status is JobStatus.RUNNING:
+                repo = JobRepository(session)
+                repo.update_progress(job, progress)
+                repo.update_stream(job, stage=stage, message=message, slides=slides)
+                session.commit()
+
+    def set(self, progress: int, *, stage: str, message: str | None = None) -> None:
+        self._update(
+            progress=progress,
+            stage=stage,
+            message=message or self._default_message(progress, stage),
+        )
+
+    def slide(self, progress: int, slide_index: int, slide: dict[str, object]) -> None:
+        # Keep existing slides so the dashboard can render them incrementally.
+        logger.info("[stream] updating slide %d for job %s", slide_index, self._job_id)
+        with self._session_factory() as session:
+            job = session.get(GenerationJob, self._job_id)
+            if job is None:
+                logger.warning("[stream] job %s not found", self._job_id)
+                return
+            if job.status is not JobStatus.RUNNING:
+                logger.warning("[stream] job %s not running: %s", self._job_id, job.status)
+                return
+            repo = JobRepository(session)
+            repo.update_progress(job, progress)
+            slides = (job.stream_data or {}).get("slides", []) if job.stream_data else []
+            slides = list(slides)
+            # Extend or replace the slide at the current index.
+            if len(slides) <= slide_index:
+                slides.extend([{}] * (slide_index - len(slides) + 1))
+            slides[slide_index] = slide
+            repo.update_stream(
+                job,
+                stage="rendering",
+                message=f"Building slide {slide_index + 1}...",
+                slides=slides,
+            )
+            session.commit()
+            logger.info("[stream] slide %d saved for job %s", slide_index, self._job_id)
+
+    def _default_message(self, progress: int, stage: str) -> str:
+        messages: dict[str, dict[str, str]] = {
+            "analyzing": {"en": "Analyzing the source...", "vi": "Đang phân tích nguồn..."},
+            "planning": {"en": "Planning the story...", "vi": "Đang lập dàn ý..."},
+            "outlining": {"en": "Outlining slides...", "vi": "Đang tạo slide..."},
+            "rendering": {"en": "Rendering slides...", "vi": "Đang render slide..."},
+            "finalizing": {"en": "Finalizing presentation...", "vi": "Đang hoàn thiện bài thuyết trình..."},
+        }
+        return messages.get(stage, {}).get(self._language, messages.get(stage, {}).get("en", "Working..."))
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,6 +169,9 @@ class GenerationWorker:
         if claimed is None:
             return False
 
+        logger.info("[worker] claimed job %s", claimed.job_id)
+        tracker = _StreamTracker(self.session_factory, claimed.job_id, claimed.language)
+        tracker.set(10, stage="analyzing")
         presentation_id = uuid4()
         base_request = GenerationRequest(
             presentation_id=presentation_id,
@@ -116,8 +185,11 @@ class GenerationWorker:
             theme_id=claimed.theme_id,
         )
         try:
-            outline = StoryOutline.from_dicts(
-                claimed.outline or self.pipeline.generate_outline(
+            logger.info("[worker] generating outline for job %s", claimed.job_id)
+            outline_items = claimed.outline
+            if not outline_items:
+                tracker.set(15, stage="planning")
+                outline_items = self.pipeline.generate_outline(
                     OutlineRequest(
                         title=claimed.title,
                         text=claimed.text,
@@ -127,14 +199,22 @@ class GenerationWorker:
                         source_kind=claimed.source_kind,
                     )
                 )
-            )
+            outline = StoryOutline.from_dicts(outline_items)
+            tracker.set(40, stage="outlining", message=f"Outline ready: {len(outline.items)} slides")
+            logger.info("[worker] outline ready for job %s (%d slides)", claimed.job_id, len(outline.items))
             asset_plan = self.pipeline.plan_assets(outline, base_request)
             asset_plan = replace(asset_plan, owner_id=claimed.owner_id)
+            tracker.set(50, stage="rendering")
             asset_map = self._generate_assets(asset_plan)
-            document = self.pipeline.render(base_request, outline, assets=asset_map)
+            tracker.set(60, stage="rendering")
+            logger.info("[worker] rendering for job %s", claimed.job_id)
+            document = self._render_slide_by_slide(base_request, outline, assets=asset_map, tracker=tracker)
+            tracker.set(95, stage="finalizing")
+            logger.info("[worker] render complete for job %s", claimed.job_id)
             with self.session_factory() as session:
                 job = session.get(GenerationJob, claimed.job_id)
                 if job is None or job.status is not JobStatus.RUNNING:
+                    logger.warning("[worker] job %s is gone or not running", claimed.job_id)
                     return False
                 session.add(
                     PresentationRecord(
@@ -152,8 +232,10 @@ class GenerationWorker:
                     {"presentation_id": str(presentation_id), "provider": self.pipeline.name},
                 )
                 session.commit()
+                logger.info("[worker] job %s succeeded", claimed.job_id)
             return True
         except Exception as error:
+            logger.exception("[worker] job %s failed", claimed.job_id)
             with self.session_factory() as session:
                 job = session.get(GenerationJob, claimed.job_id)
                 if job is not None and job.status is JobStatus.RUNNING:
@@ -164,6 +246,46 @@ class GenerationWorker:
                     )
                     session.commit()
             return True
+
+    def _render_slide_by_slide(
+        self,
+        request: GenerationRequest,
+        outline: StoryOutline,
+        *,
+        assets: dict[tuple[int, str], str],
+        tracker: _StreamTracker,
+    ) -> dict[str, object]:
+        """Render the presentation one slide at a time, emitting stream events."""
+        slides = self.pipeline.content_generator.render_slides(request, outline, assets=assets)
+        total = len(slides)
+        theme: dict[str, object] | None = None
+        streamed_slides: list[dict[str, object]] = []
+        for index, slide in enumerate(slides):
+            streamed_slides.append(slide)
+            if theme is None:
+                # Pull theme from the first compiled slide if available; otherwise
+                # look it up directly. Native/Presenton generators both include theme
+                # in the final document, but per-slide preview only needs colors.
+                theme = slide.get("theme") if isinstance(slide.get("theme"), dict) else None  # type: ignore[arg-type]
+            progress = 60 + int((index + 1) / max(total, 1) * 30)
+            tracker.slide(progress, index, slide)
+            # Delay so the dashboard can show each slide appearing one by one.
+            sleep(0.8)
+        document: dict[str, object] = {
+            "id": str(request.presentation_id),
+            "schemaVersion": 1,
+            "title": request.title,
+            "language": request.language,
+            "revision": 0,
+            "slides": streamed_slides,
+        }
+        if theme is not None:
+            document["theme"] = theme
+        else:
+            from .themes import get_theme
+
+            document["theme"] = get_theme(request.theme_id)
+        return document
 
     def run_forever(self, poll_seconds: float = 1.0) -> None:
         while True:

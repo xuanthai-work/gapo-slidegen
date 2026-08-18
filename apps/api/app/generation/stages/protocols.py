@@ -32,7 +32,11 @@ class StoryPlanner(Protocol):
 
     name: str
 
-    def generate_outline(self, request: OutlineRequest) -> list[dict[str, object]]:
+    def generate_outline(
+        self,
+        request: OutlineRequest,
+        understanding: dict[str, object] | None = None,
+    ) -> list[dict[str, object]]:
         ...
 
 
@@ -57,6 +61,20 @@ class ContentGenerator(Protocol):
         *,
         assets: Mapping[tuple[int, str], str],
     ) -> dict[str, object]:
+        ...
+
+    def render_slides(
+        self,
+        request: GenerationRequest,
+        outline: StoryOutline,
+        *,
+        assets: Mapping[tuple[int, str], str],
+    ) -> list[dict[str, object]]:
+        """Render each slide individually for streaming previews.
+
+        Implementations should return a list of slide documents in order. The
+        orchestrator/worker can emit a Server-Sent Event after each slide.
+        """
         ...
 
 
