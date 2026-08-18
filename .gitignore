@@ -40,3 +40,9 @@ storage/
 # Test output
 test-results/
 playwright-report/
+
+# Local-only files (prevent accidental commits)
+.cursor/
+apps/web/cookie.txt
+apps/web/cookie_local.txt
+image.png

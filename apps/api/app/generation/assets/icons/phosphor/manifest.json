@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "style": "phosphor-regular",
+  "basePath": "SVGs/regular",
+  "licenseFile": "LICENSE",
+  "icons": {
+    "automation": "gear-six.svg",
+    "workflow": "flow-arrow.svg",
+    "pipeline": "share-network.svg",
+    "branching": "git-branch.svg",
+    "network": "tree-structure.svg",
+    "integration": "arrows-left-right.svg",
+    "code": "code.svg",
+    "runtime": "terminal-window.svg",
+    "data": "database.svg",
+    "analytics": "chart-line-up.svg",
+    "metrics": "chart-bar.svg",
+    "growth": "trend-up.svg",
+    "presentation": "presentation-chart.svg",
+    "launch": "rocket-launch.svg",
+    "goal": "target.svg",
+    "quality": "check-circle.svg",
+    "security": "shield-check.svg",
+    "reliability": "bug.svg",
+    "team": "users-three.svg",
+    "collaboration": "handshake.svg",
+    "idea": "lightning.svg",
+    "platform": "cloud.svg",
+    "hub": "circles-three-plus.svg",
+    "graph": "graph.svg"
+  }
+}

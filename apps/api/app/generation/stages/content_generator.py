@@ -3,6 +3,7 @@ slide schema JSON.
 """
 
 from ..provider import GenerationRequest
+from ..themes import THEMES
 from .models import StoryOutline
 from .native_content_generator import NativeContentGenerator
 from .presenton_content_generator import PresentonContentGenerator
@@ -19,7 +20,7 @@ __all__ = [
 
 def build_content_generator(theme_id: str) -> ContentGenerator:
     """Return the renderer appropriate for the requested theme."""
-    if theme_id == "modern-blue":
+    if theme_id in THEMES:
         return PresentonContentGenerator()
     return NativeContentGenerator()
 

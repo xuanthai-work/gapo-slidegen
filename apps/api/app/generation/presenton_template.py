@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Literal, Mapping
 from uuid import uuid4
 
+from .local_icon_registry import resolve_icon_for_context
 
 STAGE_WIDTH = 1280.0
 STAGE_HEIGHT = 720.0
@@ -103,6 +104,21 @@ ROLE_LAYOUT_CANDIDATES: dict[str, tuple[str, ...]] = {
     ),
 }
 
+DEFAULT_CONTENT_BUDGETS: dict[str, int] = {
+    "title_max_chars": 80,
+    "content_max_chars": 180,
+    "block_heading_max_chars": 55,
+    "block_body_max_chars": 120,
+}
+
+ROLE_CONTENT_BUDGETS: dict[str, dict[str, int]] = {
+    "cover": {"title_max_chars": 72, "content_max_chars": 130},
+    "quote": {"content_max_chars": 220, "block_body_max_chars": 220},
+    "big-stat": {"block_heading_max_chars": 42, "block_body_max_chars": 72},
+    "cta": {"title_max_chars": 64, "content_max_chars": 150},
+    "summary": {"content_max_chars": 160, "block_body_max_chars": 100},
+}
+
 
 def _layout_shape(layout_id: str) -> LayoutShape:
     return LAYOUT_SHAPES.get(layout_id, "text_only")
@@ -176,6 +192,20 @@ def _card_copy(text: str) -> tuple[str, str]:
     return " ".join(words[:5]), " ".join(words[5:])
 
 
+def _normalize_slide_copy(text: str) -> str:
+    cleaned = re.sub(r"\s+", " ", text.strip())
+    cleaned = re.sub(r"\s+([,.!?;:])", r"\1", cleaned)
+    return cleaned
+
+
+def _merge_budgets(role: str | None, budgets: dict[str, int] | None) -> dict[str, int]:
+    merged = dict(DEFAULT_CONTENT_BUDGETS)
+    if role:
+        merged.update(ROLE_CONTENT_BUDGETS.get(role, {}))
+    if budgets:
+        merged.update(budgets)
+    return merged
+
 class _ContentSlots:
     def __init__(
         self,
@@ -187,15 +217,15 @@ class _ContentSlots:
         role: str | None = None,
         budgets: dict[str, int] | None = None,
     ) -> None:
-        self.title = title
-        self.content = content
+        self.title = _normalize_slide_copy(title)
+        self.content = _normalize_slide_copy(content)
         self.cover = cover
         self.role = role or "content"
-        self.points = _content_points(content)
+        self.points = _content_points(self.content)
         self.structured = blocks is not None
         self.blocks = blocks or []
         self.counts: dict[str, int] = {}
-        self.budgets = budgets or {}
+        self.budgets = _merge_budgets(role, budgets)
 
     def _respect_budget(self, text: str, field: str) -> str:
         limit = self.budgets.get(field)
@@ -320,6 +350,9 @@ class PresentonTemplateAdapter:
             layout = self.layouts[layout_id]
         except KeyError as error:
             raise ValueError(f"Unknown Presenton layout: {layout_id}") from error
+
+        title = _normalize_slide_copy(title)
+        content = _normalize_slide_copy(content)
 
         self.elements: list[dict[str, object]] = []
         self.assets = assets or {}
@@ -511,6 +544,19 @@ class PresentonTemplateAdapter:
                 )
                 self.elements.append(base)
                 return
+            icon_svg = self._fallback_icon_svg(slot_name)
+            if icon_svg:
+                base.update(
+                    {
+                        "type": "svg",
+                        "svg": icon_svg,
+                        "alt": f"{slot_name.replace('_', ' ').title()} icon",
+                        "decorative": True,
+                        "name": str(source.get("name") or "Image icon fallback"),
+                    }
+                )
+                self.elements.append(base)
+                return
             radius = source.get("border_radius")
             radius_values = radius.values() if isinstance(radius, dict) else []
             base.update(
@@ -582,6 +628,14 @@ class PresentonTemplateAdapter:
                     }
                 )
                 self.elements.append(base)
+
+    def _fallback_icon_svg(self, slot_name: str) -> str | None:
+        return resolve_icon_for_context(
+            role=self.slots.role,
+            slot_name=slot_name,
+            title=self.slots.title,
+            content=self.slots.content,
+        )
 
     def _flatten_layout(
         self,

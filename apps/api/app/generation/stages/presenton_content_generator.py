@@ -28,6 +28,24 @@ class PresentonContentGenerator:
         return role in {"hook", "problem", "solution", "case-study", "cta", "quote"}
 
     @staticmethod
+    def _has_visual_fallback(item: StoryOutlineItem) -> bool:
+        return (item.role in {
+            "hook",
+            "problem",
+            "solution",
+            "case-study",
+            "cta",
+            "quote",
+            "features",
+            "team",
+            "process",
+            "timeline",
+            "comparison",
+            "big-stat",
+            "summary",
+        }) or PresentonContentGenerator._has_metric_data(item)
+
+    @staticmethod
     def _has_metric_data(item: StoryOutlineItem) -> bool:
         return any(
             (block.get("label") or block.get("value"))
@@ -51,7 +69,7 @@ class PresentonContentGenerator:
 
         block_count = len(item.blocks) if item.blocks else 0
         has_metric_blocks = self._has_metric_data(item)
-        has_assets = bool(self._slide_assets(assets, slide_index))
+        has_assets = bool(self._slide_assets(assets, slide_index)) or self._has_visual_fallback(item)
 
         # 1. Explicit layout id from the outline (e.g. chosen by planner/LLM)
         if item.layout_id and self._layout_exists(item.layout_id):
