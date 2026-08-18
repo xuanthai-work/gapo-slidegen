@@ -70,9 +70,11 @@ export function Dashboard() {
   const [renameDraft, setRenameDraft] = useState("");
   const [presentationActionId, setPresentationActionId] = useState<string | null>(null);
   const [jobs, setJobs] = useState<Record<string, GenerationJob>>({});
+  const [streamSlides, setStreamSlides] = useState<Record<string, Array<{ index: number; title: string; role: string }>>>({});
   const fileInput = useRef<HTMLInputElement>(null);
   const pollTimer = useRef<number | null>(null);
   const pollingJobId = useRef<string | null>(null);
+  const eventSourceRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
     Promise.all([
@@ -97,7 +99,8 @@ export function Dashboard() {
           setActiveGenerationSource(source);
           setJobs((current) => ({ ...current, [source.id]: latest }));
           if (latest.status === "queued" || latest.status === "running") {
-            trackJob(source.id, latest.id);
+            window.location.assign(`/editor?job=${latest.id}`);
+            return;
           }
         } catch {
           // Expired terminal-job sources are intentionally omitted from recovery.
@@ -165,33 +168,101 @@ export function Dashboard() {
     window.location.replace("/login");
   }
 
-  async function pollJob(sourceId: string, jobId: string) {
-    if (pollingJobId.current !== jobId) return;
-    try {
-      const job = await apiFetch<GenerationJob>(`/v1/jobs/${jobId}`);
-      if (pollingJobId.current !== jobId) return;
-      setJobs((current) => ({ ...current, [sourceId]: job }));
-      if (job.status === "succeeded" && job.result?.presentation_id) {
-        pollingJobId.current = null;
-        window.location.assign(`/editor?presentation=${job.result.presentation_id}`);
-        return;
-      }
-      if (job.status === "queued" || job.status === "running") {
-        pollTimer.current = window.setTimeout(() => void pollJob(sourceId, jobId), 1000);
-      } else {
-        pollingJobId.current = null;
-      }
-    } catch (caught) {
-      if (pollingJobId.current !== jobId) return;
-      setError(caught instanceof ApiError ? caught.message : "Could not read generation progress.");
-      pollTimer.current = window.setTimeout(() => void pollJob(sourceId, jobId), 2000);
+  function closeEventStream() {
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
     }
   }
 
   function trackJob(sourceId: string, jobId: string) {
     pollingJobId.current = jobId;
     if (pollTimer.current !== null) window.clearTimeout(pollTimer.current);
-    void pollJob(sourceId, jobId);
+    closeEventStream();
+
+    const url = `/api/jobs/${jobId}/events`;
+    console.log("[SSE] connecting", url);
+    const source = new EventSource(url);
+    eventSourceRef.current = source;
+
+    source.addEventListener("open", () => {
+      console.log("[SSE] open", jobId);
+    });
+
+    source.addEventListener("progress", (event) => {
+      console.log("[SSE] progress", event.data);
+      if (pollingJobId.current !== jobId) {
+        closeEventStream();
+        return;
+      }
+      try {
+        const job = JSON.parse(event.data) as GenerationJob;
+        setJobs((current) => ({ ...current, [sourceId]: job }));
+        if (job.status === "succeeded" && job.result?.presentation_id) {
+          pollingJobId.current = null;
+          closeEventStream();
+          window.location.assign(`/editor?presentation=${job.result.presentation_id}`);
+          return;
+        }
+        if (job.status === "failed" || job.status === "canceled") {
+          pollingJobId.current = null;
+          closeEventStream();
+        }
+      } catch {
+        // Ignore malformed SSE payload and let the connection continue.
+      }
+    });
+
+    source.addEventListener("slide", (event) => {
+      console.log("[SSE] slide", event.data);
+      if (pollingJobId.current !== jobId) {
+        closeEventStream();
+        return;
+      }
+      try {
+        const payload = JSON.parse(event.data) as {
+          stage: string;
+          message: string;
+          slide_count: number;
+          latest_slide: Record<string, unknown> | null;
+          slides: Array<Record<string, unknown>>;
+        };
+        const slides = payload.slides.map((slide, index) => {
+          const preview = extractSlidePreview(slide);
+          return { index, ...preview };
+        });
+        setStreamSlides((current) => ({ ...current, [sourceId]: slides }));
+      } catch {
+        // Ignore malformed slide payload.
+      }
+    });
+
+    source.addEventListener("error", (event) => {
+      console.log("[SSE] error", event);
+      if (pollingJobId.current !== jobId) {
+        closeEventStream();
+        return;
+      }
+      // Fall back to one-time fetch on SSE errors, then retry SSE after a short delay.
+      closeEventStream();
+      void apiFetch<GenerationJob>(`/v1/jobs/${jobId}`)
+        .then((job) => {
+          setJobs((current) => ({ ...current, [sourceId]: job }));
+          if (job.status === "succeeded" && job.result?.presentation_id) {
+            pollingJobId.current = null;
+            window.location.assign(`/editor?presentation=${job.result.presentation_id}`);
+          } else if (job.status === "queued" || job.status === "running") {
+            pollTimer.current = window.setTimeout(() => trackJob(sourceId, jobId), 2000);
+          } else {
+            pollingJobId.current = null;
+          }
+        })
+        .catch((caught: unknown) => {
+          if (pollingJobId.current !== jobId) return;
+          setError(caught instanceof ApiError ? caught.message : "Could not read generation progress.");
+          pollTimer.current = window.setTimeout(() => trackJob(sourceId, jobId), 2000);
+        });
+    });
   }
 
   async function startGeneration(
@@ -210,11 +281,10 @@ export function Dashboard() {
           theme_id: requestedThemeId,
         }),
       });
-      setJobs((current) => ({ ...current, [source.id]: job }));
-      trackJob(source.id, job.id);
+      console.log("[SSE] generation started", job.id, job.status);
+      window.location.assign(`/editor?job=${job.id}`);
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : "Could not start generation.");
-    } finally {
       setStartingSourceId(null);
     }
   }
@@ -228,7 +298,13 @@ export function Dashboard() {
       });
       pollingJobId.current = null;
       if (pollTimer.current !== null) window.clearTimeout(pollTimer.current);
+      closeEventStream();
       setJobs((current) => ({ ...current, [sourceId]: job }));
+      setStreamSlides((current) => {
+        const next = { ...current };
+        delete next[sourceId];
+        return next;
+      });
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : "Could not cancel generation.");
     } finally {
@@ -290,6 +366,81 @@ export function Dashboard() {
   }
 
   const activeGenerationJob = activeGenerationSource ? jobs[activeGenerationSource.id] : undefined;
+
+function extractSlidePreview(slide: Record<string, unknown>): { title: string; role: string } {
+  let title = "";
+  if (typeof slide.title === "string" && slide.title.trim()) {
+    title = slide.title;
+  } else {
+    const elements = Array.isArray(slide.elements) ? slide.elements : [];
+    for (const element of elements) {
+      if (typeof element === "object" && element !== null) {
+        const el = element as Record<string, unknown>;
+        const runs = Array.isArray(el.runs) ? el.runs : [];
+        for (const run of runs) {
+          if (typeof run === "object" && run !== null && typeof (run as Record<string, unknown>).text === "string") {
+            const text = (run as Record<string, unknown>).text as string;
+            if (text.trim()) {
+              title = text.trim();
+              break;
+            }
+          }
+        }
+        if (title) break;
+      }
+    }
+  }
+  const role = typeof slide.role === "string" ? slide.role : "";
+  return { title: title || "Slide", role };
+}
+
+function TypingSlidePreview({
+  number,
+  title,
+  role,
+  isActive,
+}: {
+  number: number;
+  title: string;
+  role: string;
+  isActive: boolean;
+}) {
+  const [displayed, setDisplayed] = useState(isActive ? "" : title);
+  const [showCursor, setShowCursor] = useState(isActive);
+
+  useEffect(() => {
+    if (!isActive) {
+      setDisplayed(title);
+      setShowCursor(false);
+      return;
+    }
+    setDisplayed("");
+    setShowCursor(true);
+    let index = 0;
+    const interval = window.setInterval(() => {
+      index += 1;
+      setDisplayed(title.slice(0, index));
+      if (index >= title.length) {
+        window.clearInterval(interval);
+        setShowCursor(false);
+      }
+    }, 45);
+    return () => window.clearInterval(interval);
+  }, [isActive, title]);
+
+  return (
+    <li className="generation-stream__slide">
+      <span className="generation-stream__number">{number}</span>
+      <div className="generation-stream__copy" style={{ minWidth: 0 }}>
+        <span className="generation-stream__title">
+          {displayed}
+          {showCursor ? <span className="generation-cursor" /> : null}
+        </span>
+        {role ? <span className="generation-stream__role">{role}</span> : null}
+      </div>
+    </li>
+  );
+}
 
   if (loading) {
     return (
@@ -487,28 +638,56 @@ export function Dashboard() {
                     : `“${activeGenerationSource.title}”`}
               </strong>
               <p className="generation-banner__body">
-                {startingSourceId === activeGenerationSource.id || activeGenerationJob?.status === "queued"
-                  ? "Queued — preparing your source…"
-                  : activeGenerationJob?.status === "running"
-                    ? `Creating the story and editable slides… ${activeGenerationJob.progress}%`
-                    : activeGenerationJob?.status === "failed"
-                      ? activeGenerationJob.error_message || "The presentation could not be generated."
-                      : activeGenerationJob?.status === "canceled"
-                        ? "No presentation was saved from this job."
-                        : "Starting generation…"}
+                {(() => {
+                  if (!activeGenerationSource) return "Starting generation…";
+                  const previewSlides = streamSlides[activeGenerationSource.id];
+                  const hasSlides = activeGenerationJob?.status === "running" && previewSlides && previewSlides.length > 0;
+                  if (startingSourceId === activeGenerationSource.id || activeGenerationJob?.status === "queued") {
+                    return "Queued — preparing your source…";
+                  }
+                  if (activeGenerationJob?.status === "running") {
+                    return hasSlides ? `Building ${previewSlides.length} slides…` : "Planning the story…";
+                  }
+                  if (activeGenerationJob?.status === "failed") {
+                    return activeGenerationJob.error_message || "The presentation could not be generated.";
+                  }
+                  if (activeGenerationJob?.status === "canceled") {
+                    return "No presentation was saved from this job.";
+                  }
+                  return "Starting generation…";
+                })()}
               </p>
-              {activeGenerationJob?.status === "queued" || activeGenerationJob?.status === "running" ? (
-                <div
-                  className="generation-progress"
-                  role="progressbar"
-                  aria-label="Presentation generation progress"
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  aria-valuenow={activeGenerationJob.progress}
-                >
-                  <span style={{ width: `${activeGenerationJob.progress}%` }} />
-                </div>
-              ) : null}
+              {(() => {
+                if (!activeGenerationSource || activeGenerationJob?.status !== "running") return null;
+                const previewSlides = streamSlides[activeGenerationSource.id];
+                if (previewSlides && previewSlides.length > 0) {
+                  return (
+                    <ol className="generation-stream" aria-live="polite" aria-label="Generated slides preview">
+                      {previewSlides.map((slide, listIndex) => (
+                        <TypingSlidePreview
+                          key={slide.index}
+                          number={slide.index + 1}
+                          title={slide.title}
+                          role={slide.role}
+                          isActive={listIndex === previewSlides.length - 1}
+                        />
+                      ))}
+                    </ol>
+                  );
+                }
+                return (
+                  <div
+                    className="generation-progress"
+                    role="progressbar"
+                    aria-label="Presentation generation progress"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={activeGenerationJob.progress}
+                  >
+                    <span style={{ width: `${activeGenerationJob.progress}%` }} />
+                  </div>
+                );
+              })()}
             </div>
             {activeGenerationJob?.status === "failed" || activeGenerationJob?.status === "canceled" ? (
               <button className="button" onClick={() => void startGeneration(activeGenerationSource)}>

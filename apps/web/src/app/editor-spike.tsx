@@ -32,7 +32,8 @@ import {
   type Slide,
   type SlideElement,
 } from "@gapo-slidegen/slide-schema";
-import { ApiError, apiFetch, type StoredAsset, type StoredPresentation } from "../lib/api";
+import { ApiError, apiFetch, type GenerationJob, type StoredAsset, type StoredPresentation } from "../lib/api";
+import { slideSchema } from "@gapo-slidegen/slide-schema";
 import { ToastProvider } from "./components/toast-provider";
 import { useToast } from "./components/use-toast";
 import { CommandPaletteTrigger } from "./components/command-palette-trigger";
@@ -103,16 +104,17 @@ function PresentSlide({
   );
 }
 
-export function EditorSpike({ presentationId }: { presentationId: string | undefined }) {
+export function EditorSpike({ presentationId, jobId }: { presentationId: string | undefined; jobId: string | undefined }) {
   return (
     <ToastProvider>
-      <EditorWorkspace presentationId={presentationId} />
+      <EditorWorkspace presentationId={presentationId} jobId={jobId} />
     </ToastProvider>
   );
 }
 
-function EditorWorkspace({ presentationId }: { presentationId: string | undefined }) {
+function EditorWorkspace({ presentationId: initialPresentationId, jobId }: { presentationId: string | undefined; jobId: string | undefined }) {
   const toast = useToast();
+  const [presentationId, setPresentationId] = useState(initialPresentationId);
   const [initialDocument, setInitialDocument] = useState<Presentation>(() =>
     structuredClone(canonicalPresentationFixture),
   );
@@ -135,7 +137,14 @@ function EditorWorkspace({ presentationId }: { presentationId: string | undefine
   const [generatingImage, setGeneratingImage] = useState(false);
   const [, setHistoryVersion] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [saveState, setSaveState] = useState(presentationId ? "Loading…" : "Saved locally");
+  const [saveState, setSaveState] = useState(initialPresentationId ? "Loading…" : jobId ? "Generating…" : "Saved locally");
+
+  const [generating, setGenerating] = useState(!!jobId);
+  const [generationStage, setGenerationStage] = useState("Starting generation…");
+  const [generationProgress, setGenerationProgress] = useState(0);
+  const [generationError, setGenerationError] = useState<string | null>(null);
+  const generationEventSourceRef = useRef<EventSource | null>(null);
+
   const revisionRef = useRef(0);
   const readyRef = useRef(false);
   const skipNextDocumentRef = useRef(false);
@@ -162,6 +171,90 @@ function EditorWorkspace({ presentationId }: { presentationId: string | undefine
   const slideTextElements = slide ? collectTextElements(slide.elements) : [];
 
   useEffect(() => setTitleDraft(document.title), [document.title]);
+
+  useEffect(() => {
+    if (!jobId || !generating) return;
+
+    const url = `/api/jobs/${jobId}/events`;
+    const source = new EventSource(url);
+    generationEventSourceRef.current = source;
+
+    function finishWithPresentation(presentationIdValue: string) {
+      source.close();
+      generationEventSourceRef.current = null;
+      window.history.replaceState(null, "", `/editor?presentation=${presentationIdValue}`);
+      setGenerating(false);
+      setPresentationId(presentationIdValue);
+      setSaveState("Loading…");
+    }
+
+    source.addEventListener("progress", (event) => {
+      try {
+        const job = JSON.parse(event.data) as GenerationJob;
+        setGenerationProgress(job.progress);
+        if (job.status === "succeeded" && job.result?.presentation_id) {
+          finishWithPresentation(job.result.presentation_id);
+        } else if (job.status === "failed") {
+          source.close();
+          generationEventSourceRef.current = null;
+          setGenerating(false);
+          setGenerationError(job.error_message || "Generation failed.");
+        } else if (job.status === "canceled") {
+          source.close();
+          generationEventSourceRef.current = null;
+          setGenerating(false);
+          setGenerationError("Generation was canceled.");
+        }
+      } catch { /* ignore malformed SSE */ }
+    });
+
+    source.addEventListener("slide", (event) => {
+      try {
+        const payload = JSON.parse(event.data) as {
+          stage: string;
+          message: string;
+          slide_count: number;
+          slides: Array<unknown>;
+        };
+        setGenerationStage(payload.message || `Building ${payload.slide_count} slides…`);
+        const parsedSlides = payload.slides.flatMap((raw) => {
+          const result = slideSchema.safeParse(raw);
+          return result.success ? [result.data] : [];
+        });
+        if (parsedSlides.length > 0) {
+          setDocument((prev) => {
+            const next = { ...prev, slides: parsedSlides };
+            return next;
+          });
+          setInitialDocument((prev) => ({ ...prev, slides: parsedSlides }));
+          setActiveSlideIndex(parsedSlides.length - 1);
+        }
+      } catch { /* ignore */ }
+    });
+
+    source.addEventListener("error", () => {
+      source.close();
+      generationEventSourceRef.current = null;
+      apiFetch<GenerationJob>(`/v1/jobs/${jobId}`)
+        .then((job) => {
+          if (job.status === "succeeded" && job.result?.presentation_id) {
+            finishWithPresentation(job.result.presentation_id);
+          } else if (job.status === "failed" || job.status === "canceled") {
+            setGenerating(false);
+            setGenerationError(job.error_message || "Generation failed.");
+          }
+        })
+        .catch(() => {
+          setGenerationError("Lost connection to the server.");
+          setGenerating(false);
+        });
+    });
+
+    return () => {
+      source.close();
+      generationEventSourceRef.current = null;
+    };
+  }, [jobId, generating]);
 
   useEffect(() => {
     if (!presentationId) return;
@@ -870,6 +963,31 @@ function EditorWorkspace({ presentationId }: { presentationId: string | undefine
         <main className="empty">No slide is available.</main>
       ) : (
         <main className="editor-shell">
+          {(generating || generationError) && (
+            <div className={`editor-generation-bar${generationError ? " editor-generation-bar--error" : ""}`} aria-live="polite">
+              {generationError ? (
+                <>
+                  <Sparkle size={15} />
+                  <span className="editor-generation-bar__message">{generationError}</span>
+                  <Link className="button" href="/">Back to dashboard</Link>
+                </>
+              ) : (
+                <>
+                  <Sparkle size={15} className="editor-generation-bar__icon" />
+                  <span className="editor-generation-bar__message">{generationStage}</span>
+                  <div
+                    className="editor-generation-bar__progress"
+                    role="progressbar"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={generationProgress}
+                  >
+                    <span style={{ width: `${Math.max(4, generationProgress)}%` }} />
+                  </div>
+                </>
+              )}
+            </div>
+          )}
           <header className="topbar">
             <div className="topbar__leading">
               <Link className="icon-button" href="/" aria-label="Back to presentations" title="Back to presentations">
