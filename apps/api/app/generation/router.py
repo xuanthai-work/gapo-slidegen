@@ -181,20 +181,96 @@ def get_outline_service(session: Annotated[Session, Depends(get_session)]) -> Ou
     try:
         return OutlineService(session, build_story_provider())
     except ProviderConfigurationError as error:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(error),
-        ) from error
+        raise _service_unavailable_from_provider(error) from error
 
 
 def get_rewrite_provider() -> RewriteProvider:
     try:
         return build_rewrite_provider()
     except ProviderConfigurationError as error:
+        raise _service_unavailable_from_provider(error) from error
+
+
+def _service_unavailable_from_provider(error: ProviderConfigurationError) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail=str(error),
+    )
+
+
+def _bad_gateway_from_provider(error: ProviderError) -> HTTPException:
+    return HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error))
+
+
+def _outline_http_error(error: Exception) -> HTTPException:
+    if isinstance(error, OutlineNotFound):
+        return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error))
+    if isinstance(error, InvalidOutline):
+        return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))
+    if isinstance(error, OutlineConflict):
+        return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error))
+    if isinstance(error, ProviderError):
+        return HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error))
+    raise TypeError(f"Unsupported outline error: {type(error)!r}")
+
+
+def _presentation_http_error(error: Exception) -> HTTPException:
+    if isinstance(error, PresentationNotFound):
+        return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error))
+    if isinstance(error, PresentationConflict):
+        return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error))
+    if isinstance(error, PresentationAssetNotFound):
+        return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))
+    if isinstance(error, InvalidPresentationDocument):
+        return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))
+    raise TypeError(f"Unsupported presentation error: {type(error)!r}")
+
+
+def _job_http_error(error: Exception) -> HTTPException:
+    if isinstance(error, JobNotFound):
+        return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error))
+    if isinstance(error, JobConflict):
+        return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error))
+    raise TypeError(f"Unsupported job error: {type(error)!r}")
+
+
+def _raise_not_found(detail: str) -> None:
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=detail)
+
+
+def _resolve_generation_target(payload: GenerationInput) -> Literal["outline", "source"]:
+    if payload.outline_id is not None and payload.source_id is not None:
         raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(error),
-        ) from error
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Choose either outline_id or source_id, not both.",
+        )
+    if payload.outline_id is not None:
+        return "outline"
+    if payload.source_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="outline_id or source_id is required.",
+        )
+    return "source"
+
+
+def _sse_progress_event(job: GenerationJob) -> str:
+    payload = JobView.model_validate(job).model_dump_json()
+    return f"event: progress\ndata: {payload}\n\n"
+
+
+def _sse_slide_event(stream: dict[str, object], stream_slides: list[object]) -> str:
+    stream_payload = json.dumps(
+        {
+            "stage": stream.get("stage") or "rendering",
+            "message": stream.get("message") or "Building slides...",
+            "slide_count": len(stream_slides),
+            "latest_slide": stream_slides[-1] if stream_slides else None,
+            "slides": stream_slides,
+        },
+        ensure_ascii=False,
+    )
+    return f"event: slide\ndata: {stream_payload}\n\n"
 
 
 @router.post("/v1/ai/rewrite", response_model=RewriteOutput)
@@ -214,12 +290,9 @@ def rewrite_text(
         )
         return RewriteOutput(text=text, provider=provider.name)
     except ProviderConfigurationError as error:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(error),
-        ) from error
+        raise _service_unavailable_from_provider(error) from error
     except ProviderError as error:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)) from error
+        raise _bad_gateway_from_provider(error) from error
 
 
 @router.post("/v1/ai/rewrite-slide", response_model=SlideRewriteOutput)
@@ -242,12 +315,9 @@ def rewrite_slide(
             provider=provider.name,
         )
     except ProviderConfigurationError as error:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(error),
-        ) from error
+        raise _service_unavailable_from_provider(error) from error
     except ProviderError as error:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)) from error
+        raise _bad_gateway_from_provider(error) from error
 
 
 @router.post("/v1/outlines", response_model=OutlineView, status_code=status.HTTP_201_CREATED)
@@ -263,12 +333,8 @@ def create_outline(
             slide_count=payload.slide_count,
             language=payload.language,
         )
-    except OutlineNotFound as error:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
-    except InvalidOutline as error:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)) from error
-    except ProviderError as error:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)) from error
+    except (OutlineNotFound, InvalidOutline, ProviderError) as error:
+        raise _outline_http_error(error) from error
 
 
 @router.get("/v1/outlines/{outline_id}", response_model=OutlineView)
@@ -279,7 +345,7 @@ def get_outline(
 ) -> OutlineRecord:
     outline = service.get_owned(outline_id, user)
     if outline is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Outline not found.")
+        _raise_not_found("Outline not found.")
     return outline
 
 
@@ -297,12 +363,8 @@ def update_outline(
             expected_revision=payload.expected_revision,
             items=[item.model_dump() for item in payload.items],
         )
-    except InvalidOutline as error:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)) from error
-    except OutlineNotFound as error:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
-    except OutlineConflict as error:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+    except (InvalidOutline, OutlineNotFound, OutlineConflict) as error:
+        raise _outline_http_error(error) from error
 
 
 @router.post("/v1/generations", response_model=JobView, status_code=status.HTTP_202_ACCEPTED)
@@ -312,21 +374,12 @@ def request_generation(
     service: Annotated[GenerationService, Depends(get_generation_service)],
 ) -> GenerationJob:
     try:
-        if payload.outline_id is not None and payload.source_id is not None:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail="Choose either outline_id or source_id, not both.",
-            )
-        if payload.outline_id is not None:
+        target = _resolve_generation_target(payload)
+        if target == "outline":
             return service.enqueue_outline(
                 user=user,
                 outline_id=payload.outline_id,
                 theme_id=payload.theme_id,
-            )
-        if payload.source_id is None:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail="outline_id or source_id is required.",
             )
         return service.enqueue(
             user=user,
@@ -355,7 +408,7 @@ def get_job(
 ) -> GenerationJob:
     job = service.get_job(job_id, user)
     if job is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+        _raise_not_found("Job not found.")
     return job
 
 
@@ -367,10 +420,8 @@ def cancel_job(
 ) -> GenerationJob:
     try:
         return service.cancel_job(job_id, user)
-    except JobNotFound as error:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
-    except JobConflict as error:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+    except (JobNotFound, JobConflict) as error:
+        raise _job_http_error(error) from error
 
 
 @router.get("/v1/jobs/{job_id}/events")
@@ -407,23 +458,13 @@ async def stream_job_events(
             payload = JobView.model_validate(job).model_dump_json()
             if payload != last_payload:
                 last_payload = payload
-                yield f"event: progress\ndata: {payload}\n\n"
+                yield _sse_progress_event(job)
 
             stream = job.stream_data if isinstance(job.stream_data, dict) else None
             stream_slides = stream.get("slides") if stream else None
             if isinstance(stream_slides, list) and len(stream_slides) > last_stream_slide_count:
                 last_stream_slide_count = len(stream_slides)
-                stream_payload = json.dumps(
-                    {
-                        "stage": stream.get("stage") if stream else "rendering",
-                        "message": stream.get("message") if stream else "Building slides...",
-                        "slide_count": len(stream_slides),
-                        "latest_slide": stream_slides[-1] if stream_slides else None,
-                        "slides": stream_slides,
-                    },
-                    ensure_ascii=False,
-                )
-                yield f"event: slide\ndata: {stream_payload}\n\n"
+                yield _sse_slide_event(stream or {}, stream_slides)
 
             if job.status.value in terminal_statuses:
                 break
@@ -452,7 +493,7 @@ def get_presentation(
 ) -> PresentationRecord:
     presentation = service.get_presentation(presentation_id, user)
     if presentation is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Presentation not found.")
+        _raise_not_found("Presentation not found.")
     return presentation
 
 
@@ -478,10 +519,8 @@ def rename_presentation(
             expected_revision=payload.expected_revision,
             title=payload.title,
         )
-    except PresentationNotFound as error:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
-    except PresentationConflict as error:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+    except (PresentationNotFound, PresentationConflict) as error:
+        raise _presentation_http_error(error) from error
 
 
 @router.delete("/v1/presentations/{presentation_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -497,10 +536,8 @@ def delete_presentation(
             user=user,
             expected_revision=expected_revision,
         )
-    except PresentationNotFound as error:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
-    except PresentationConflict as error:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+    except (PresentationNotFound, PresentationConflict) as error:
+        raise _presentation_http_error(error) from error
 
 
 @router.patch("/v1/presentations/{presentation_id}", response_model=PresentationView)
@@ -518,11 +555,10 @@ def update_presentation(
             expected_revision=payload.expected_revision,
             document=payload.document,
         )
-    except InvalidPresentationDocument as error:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)) from error
-    except PresentationNotFound as error:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
-    except PresentationConflict as error:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
-    except PresentationAssetNotFound as error:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)) from error
+    except (
+        InvalidPresentationDocument,
+        PresentationNotFound,
+        PresentationConflict,
+        PresentationAssetNotFound,
+    ) as error:
+        raise _presentation_http_error(error) from error

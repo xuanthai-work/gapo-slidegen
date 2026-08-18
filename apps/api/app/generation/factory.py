@@ -14,6 +14,10 @@ from .stub_provider import StubPresentationProvider
 # from .gemini_provider import GoogleAIStudioProvider
 
 
+def _missing_settings(*items: tuple[str, str]) -> list[str]:
+    return [name for name, value in items if not value]
+
+
 def _build_story_planner():
     settings = get_settings()
     provider_name = settings.generation_provider.strip().lower()
@@ -27,15 +31,11 @@ def _build_story_planner():
         )
         base_url = (settings.company_gateway_url or "").strip()
         model = (settings.company_gateway_model or "").strip()
-        missing = [
-            name
-            for name, value in (
-                ("SLIDEGEN_COMPANY_GATEWAY_URL", base_url),
-                ("SLIDEGEN_COMPANY_GATEWAY_API_KEY", api_key),
-                ("SLIDEGEN_COMPANY_GATEWAY_MODEL", model),
-            )
-            if not value
-        ]
+        missing = _missing_settings(
+            ("SLIDEGEN_COMPANY_GATEWAY_URL", base_url),
+            ("SLIDEGEN_COMPANY_GATEWAY_API_KEY", api_key),
+            ("SLIDEGEN_COMPANY_GATEWAY_MODEL", model),
+        )
         if missing:
             raise ProviderConfigurationError(
                 "Company gateway provider is missing: " + ", ".join(missing)
@@ -92,14 +92,10 @@ def build_image_provider():
     if provider_name in {"google-ai-studio", "gemini"}:
         api_key = settings.google_api_key.get_secret_value().strip() if settings.google_api_key else ""
         model = settings.google_image_model.strip() if settings.google_image_model else ""
-        missing = [
-            name
-            for name, value in (
-                ("SLIDEGEN_GOOGLE_API_KEY", api_key),
-                ("SLIDEGEN_GOOGLE_IMAGE_MODEL", model),
-            )
-            if not value
-        ]
+        missing = _missing_settings(
+            ("SLIDEGEN_GOOGLE_API_KEY", api_key),
+            ("SLIDEGEN_GOOGLE_IMAGE_MODEL", model),
+        )
         if missing:
             raise ProviderConfigurationError(
                 "Google AI Studio image provider is missing: " + ", ".join(missing)

@@ -44,12 +44,30 @@ const SlideCanvas = dynamic(() => import("./editor-canvas"), { ssr: false });
 const resolveAssetUrl = (assetId: string) => `/api/backend/v1/assets/${assetId}/content`;
 type TextElement = Extract<SlideElement, { type: "text" }>;
 
+function textFromRuns(runs: Array<{ text: string }>): string {
+  return runs.map((run) => run.text).join("");
+}
+
+function visitSlideElements(
+  elements: SlideElement[],
+  visit: (element: SlideElement) => void,
+): void {
+  for (const element of elements) {
+    visit(element);
+    if ("children" in element) {
+      visitSlideElements(element.children, visit);
+    }
+  }
+}
+
 function collectTextElements(elements: SlideElement[]): TextElement[] {
-  return elements.flatMap((element) => {
-    if (element.type === "text") return [element];
-    if ("children" in element) return collectTextElements(element.children);
-    return [];
+  const textElements: TextElement[] = [];
+  visitSlideElements(elements, (element) => {
+    if (element.type === "text") {
+      textElements.push(element);
+    }
   });
+  return textElements;
 }
 
 function rewriteTextElements(
@@ -75,6 +93,13 @@ function rewriteTextElements(
     return element;
   });
 }
+
+type JobSlidePayload = {
+  stage: string;
+  message: string;
+  slide_count: number;
+  slides: Array<unknown>;
+};
 
 function PresentSlide({
   slide,
@@ -168,9 +193,25 @@ function EditorWorkspace({ presentationId: initialPresentationId, jobId }: { pre
   );
   const slide = document.slides[activeSlideIndex];
   const selected = slide?.elements.find((element) => element.id === selectedElementId);
+  const selectedText = selected?.type === "text" ? selected : null;
+  const selectedImage = selected?.type === "image" ? selected : null;
+  const selectedShape = selected?.type === "shape" ? selected : null;
   const slideTextElements = slide ? collectTextElements(slide.elements) : [];
 
   useEffect(() => setTitleDraft(document.title), [document.title]);
+
+  function applyStreamedSlides(payload: JobSlidePayload) {
+    setGenerationStage(payload.message || `Building ${payload.slide_count} slides…`);
+    const parsedSlides = payload.slides.flatMap((raw) => {
+      const result = slideSchema.safeParse(raw);
+      return result.success ? [result.data] : [];
+    });
+    if (parsedSlides.length > 0) {
+      setDocument((prev) => ({ ...prev, slides: parsedSlides }));
+      setInitialDocument((prev) => ({ ...prev, slides: parsedSlides }));
+      setActiveSlideIndex(parsedSlides.length - 1);
+    }
+  }
 
   useEffect(() => {
     if (!jobId || !generating) return;
@@ -210,25 +251,8 @@ function EditorWorkspace({ presentationId: initialPresentationId, jobId }: { pre
 
     source.addEventListener("slide", (event) => {
       try {
-        const payload = JSON.parse(event.data) as {
-          stage: string;
-          message: string;
-          slide_count: number;
-          slides: Array<unknown>;
-        };
-        setGenerationStage(payload.message || `Building ${payload.slide_count} slides…`);
-        const parsedSlides = payload.slides.flatMap((raw) => {
-          const result = slideSchema.safeParse(raw);
-          return result.success ? [result.data] : [];
-        });
-        if (parsedSlides.length > 0) {
-          setDocument((prev) => {
-            const next = { ...prev, slides: parsedSlides };
-            return next;
-          });
-          setInitialDocument((prev) => ({ ...prev, slides: parsedSlides }));
-          setActiveSlideIndex(parsedSlides.length - 1);
-        }
+        const payload = JSON.parse(event.data) as JobSlidePayload;
+        applyStreamedSlides(payload);
       } catch { /* ignore */ }
     });
 
@@ -463,6 +487,10 @@ function EditorWorkspace({ presentationId: initialPresentationId, jobId }: { pre
     }
   }
 
+  function nextOperationId(): string {
+    return crypto.randomUUID();
+  }
+
   function commitTitle() {
     const title = titleDraft.trim();
     if (!title) {
@@ -474,7 +502,7 @@ function EditorWorkspace({ presentationId: initialPresentationId, jobId }: { pre
       return;
     }
     if (!applyOperation({
-      operationId: crypto.randomUUID(),
+      operationId: nextOperationId(),
       type: "replace-presentation",
       presentation: { ...document, title },
     })) {
@@ -514,7 +542,7 @@ function EditorWorkspace({ presentationId: initialPresentationId, jobId }: { pre
     };
     if (
       applyOperation({
-        operationId: crypto.randomUUID(),
+        operationId: nextOperationId(),
         type: "add-slide",
         index: nextIndex,
         slide: newSlide,
@@ -530,7 +558,7 @@ function EditorWorkspace({ presentationId: initialPresentationId, jobId }: { pre
     if (!target || document.slides.length === 1) return;
     if (
       applyOperation({
-        operationId: crypto.randomUUID(),
+        operationId: nextOperationId(),
         type: "remove-slide",
         slideId: target.id,
       })
@@ -548,7 +576,7 @@ function EditorWorkspace({ presentationId: initialPresentationId, jobId }: { pre
     if (!target || nextIndex < 0 || nextIndex >= document.slides.length) return;
     if (
       applyOperation({
-        operationId: crypto.randomUUID(),
+        operationId: nextOperationId(),
         type: "move-slide",
         slideId: target.id,
         index: nextIndex,
@@ -579,7 +607,7 @@ function EditorWorkspace({ presentationId: initialPresentationId, jobId }: { pre
       horizontalAlign: "left",
       verticalAlign: "top",
     };
-    if (applyOperation({ operationId: crypto.randomUUID(), type: "upsert-element", slideId: slide.id, element })) {
+    if (applyOperation({ operationId: nextOperationId(), type: "upsert-element", slideId: slide.id, element })) {
       setSelectedElementId(id);
     }
   }
@@ -600,7 +628,7 @@ function EditorWorkspace({ presentationId: initialPresentationId, jobId }: { pre
       fill: { color: document.theme.colors.primary, opacity: 1 },
       cornerRadius: 12,
     };
-    if (applyOperation({ operationId: crypto.randomUUID(), type: "upsert-element", slideId: slide.id, element })) {
+    if (applyOperation({ operationId: nextOperationId(), type: "upsert-element", slideId: slide.id, element })) {
       setSelectedElementId(id);
     }
   }
@@ -613,7 +641,7 @@ function EditorWorkspace({ presentationId: initialPresentationId, jobId }: { pre
   ) {
     if (targetImage) {
       applyOperation({
-        operationId: crypto.randomUUID(),
+        operationId: nextOperationId(),
         type: "upsert-element",
         slideId: targetSlide.id,
         element: { ...targetImage, assetId: asset.id, alt },
@@ -641,7 +669,7 @@ function EditorWorkspace({ presentationId: initialPresentationId, jobId }: { pre
     };
     if (
       applyOperation({
-        operationId: crypto.randomUUID(),
+        operationId: nextOperationId(),
         type: "upsert-element",
         slideId: targetSlide.id,
         element,
@@ -672,7 +700,7 @@ function EditorWorkspace({ presentationId: initialPresentationId, jobId }: { pre
     const prompt = imagePrompt.trim();
     if (!slide || !prompt) return;
     const targetSlide = slide;
-    const targetImage = selected?.type === "image" ? selected : null;
+    const targetImage = selectedImage;
     setGeneratingImage(true);
     try {
       const asset = await apiFetch<StoredAsset>("/v1/assets/generate", {
@@ -692,7 +720,7 @@ function EditorWorkspace({ presentationId: initialPresentationId, jobId }: { pre
     if (!slide || !selectedElementId) return;
     if (
       applyOperation({
-        operationId: crypto.randomUUID(),
+        operationId: nextOperationId(),
         type: "remove-element",
         slideId: slide.id,
         elementId: selectedElementId,
@@ -712,7 +740,7 @@ function EditorWorkspace({ presentationId: initialPresentationId, jobId }: { pre
       y: Math.min(680 - element.size.height, Math.max(0, element.position.y + 24)),
     };
     if (applyOperation({
-      operationId: crypto.randomUUID(),
+      operationId: nextOperationId(),
       type: "upsert-element",
       slideId: slide.id,
       element,
@@ -725,7 +753,7 @@ function EditorWorkspace({ presentationId: initialPresentationId, jobId }: { pre
     const nextIndex = currentIndex + direction;
     if (currentIndex < 0 || nextIndex < 0 || nextIndex >= slide.elements.length) return;
     applyOperation({
-      operationId: crypto.randomUUID(),
+      operationId: nextOperationId(),
       type: "move-element",
       slideId: slide.id,
       elementId: selected.id,
@@ -736,7 +764,7 @@ function EditorWorkspace({ presentationId: initialPresentationId, jobId }: { pre
   function updateElement(element: SlideElement) {
     if (!slide) return;
     editor.apply({
-      operationId: crypto.randomUUID(),
+      operationId: nextOperationId(),
       type: "upsert-element",
       slideId: slide.id,
       element,
@@ -744,10 +772,10 @@ function EditorWorkspace({ presentationId: initialPresentationId, jobId }: { pre
   }
 
   function updateSelectedText(value: string) {
-    if (!selected || selected.type !== "text") return;
-    const runFont = selected.runs[0]?.font;
+    if (!selectedText) return;
+    const runFont = selectedText.runs[0]?.font;
     updateElement({
-      ...selected,
+      ...selectedText,
       runs: [{ text: value, ...(runFont ? { font: runFont } : {}) }],
     });
   }
@@ -755,36 +783,36 @@ function EditorWorkspace({ presentationId: initialPresentationId, jobId }: { pre
   function updateSelectedTextFont(
     patch: Partial<NonNullable<Extract<SlideElement, { type: "text" }>["font"]>>,
   ) {
-    if (!selected || selected.type !== "text") return;
-    updateElement({ ...selected, font: { ...selected.font, ...patch } });
+    if (!selectedText) return;
+    updateElement({ ...selectedText, font: { ...selectedText.font, ...patch } });
   }
 
   function updateSelectedImage(
     patch: Partial<Pick<Extract<SlideElement, { type: "image" }>, "alt" | "fit">>,
   ) {
-    if (!selected || selected.type !== "image") return;
-    updateElement({ ...selected, ...patch });
+    if (!selectedImage) return;
+    updateElement({ ...selectedImage, ...patch });
   }
 
   function updateSelectedShape(
     patch: Partial<Pick<Extract<SlideElement, { type: "shape" }>, "cornerRadius" | "fill" | "shape">>,
   ) {
-    if (!selected || selected.type !== "shape") return;
-    updateElement({ ...selected, ...patch });
+    if (!selectedShape) return;
+    updateElement({ ...selectedShape, ...patch });
   }
 
   async function rewriteWithAI() {
     const instruction = aiInstruction.trim();
     if (!slide || !instruction) return;
-    if (aiScope === "selection" && (!selected || selected.type !== "text")) return;
+    if (aiScope === "selection" && !selectedText) return;
     if (aiScope === "slide" && slideTextElements.length === 0) return;
     setRewritingWithAI(true);
     try {
-      if (aiScope === "selection" && selected?.type === "text") {
+      if (aiScope === "selection" && selectedText) {
         const result = await apiFetch<{ text: string; provider: string }>("/v1/ai/rewrite", {
           method: "POST",
           body: JSON.stringify({
-            text: selected.runs.map((run) => run.text).join(""),
+            text: textFromRuns(selectedText.runs),
             instruction,
             language: document.language,
           }),
@@ -799,7 +827,7 @@ function EditorWorkspace({ presentationId: initialPresentationId, jobId }: { pre
           body: JSON.stringify({
             items: slideTextElements.map((element) => ({
               id: element.id,
-              text: element.runs.map((run) => run.text).join(""),
+              text: textFromRuns(element.runs),
             })),
             instruction,
             language: document.language,
@@ -811,7 +839,7 @@ function EditorWorkspace({ presentationId: initialPresentationId, jobId }: { pre
           elements: rewriteTextElements(slide.elements, rewrittenById),
         };
         applyOperation({
-          operationId: crypto.randomUUID(),
+          operationId: nextOperationId(),
           type: "replace-slide",
           slideId: slide.id,
           slide: rewrittenSlide,
@@ -1122,7 +1150,7 @@ function EditorWorkspace({ presentationId: initialPresentationId, jobId }: { pre
                   {aiTool === "image" ? (
                     <>
                       <p>
-                        {selected?.type === "image"
+                        {selectedImage
                           ? "The generated image will replace the selected image while keeping its frame."
                           : "A new 16:9 image will be added to the current slide."}
                       </p>
@@ -1140,7 +1168,7 @@ function EditorWorkspace({ presentationId: initialPresentationId, jobId }: { pre
                         <button type="button" onClick={() => setImagePrompt("A simple conceptual diagram illustration, clear visual hierarchy, no text")}>Concept</button>
                       </div>
                       <button className="button button--primary ai-rewrite-submit" disabled={generatingImage || !imagePrompt.trim()} onClick={() => void generateImage()}>
-                        <ImageSquare size={16} />{generatingImage ? "Generating…" : selected?.type === "image" ? "Generate and replace" : "Generate and add"}
+                        <ImageSquare size={16} />{generatingImage ? "Generating…" : selectedImage ? "Generate and replace" : "Generate and add"}
                       </button>
                       <small>Only this prompt is sent to the configured image provider. The result is stored as your private asset.</small>
                     </>
@@ -1164,11 +1192,11 @@ function EditorWorkspace({ presentationId: initialPresentationId, jobId }: { pre
                           Current slide
                         </button>
                       </div>
-                      {(aiScope === "selection" && selected?.type === "text") || (aiScope === "slide" && slideTextElements.length > 0) ? (
+                      {(aiScope === "selection" && selectedText) || (aiScope === "slide" && slideTextElements.length > 0) ? (
                         <>
                           <p className="ai-selection-preview">
-                            {aiScope === "selection" && selected?.type === "text"
-                              ? selected.runs.map((run) => run.text).join("")
+                            {aiScope === "selection" && selectedText
+                              ? textFromRuns(selectedText.runs)
                               : `${slideTextElements.length} editable text block${slideTextElements.length === 1 ? "" : "s"} will be rewritten together.`}
                           </p>
                           <label htmlFor="ai-rewrite-instruction">Instruction</label>
@@ -1203,7 +1231,7 @@ function EditorWorkspace({ presentationId: initialPresentationId, jobId }: { pre
                     </>
                   )}
                 </div>
-              ) : selected?.type === "text" ? (
+              ) : selectedText ? (
                 <div className="property-form">
                   <div className="property-grid">
                     <label>
@@ -1212,7 +1240,7 @@ function EditorWorkspace({ presentationId: initialPresentationId, jobId }: { pre
                         type="number"
                         min="8"
                         max="200"
-                        value={selected.font?.size ?? 54}
+                        value={selectedText.font?.size ?? 54}
                         onChange={(event) => {
                           const size = Number(event.target.value);
                           if (Number.isFinite(size)) updateSelectedTextFont({ size: Math.min(200, Math.max(8, size)) });
@@ -1225,10 +1253,10 @@ function EditorWorkspace({ presentationId: initialPresentationId, jobId }: { pre
                         <input
                           aria-label="Text color"
                           type="color"
-                          value={selected.font?.color ?? document.theme.colors.text}
+                          value={selectedText.font?.color ?? document.theme.colors.text}
                           onChange={(event) => updateSelectedTextFont({ color: event.target.value })}
                         />
-                        <span>{selected.font?.color ?? document.theme.colors.text}</span>
+                        <span>{selectedText.font?.color ?? document.theme.colors.text}</span>
                       </span>
                     </label>
                   </div>
@@ -1236,21 +1264,21 @@ function EditorWorkspace({ presentationId: initialPresentationId, jobId }: { pre
                     <button
                       type="button"
                       aria-label="Bold"
-                      aria-pressed={selected.font?.bold ?? false}
-                      onClick={() => updateSelectedTextFont({ bold: !(selected.font?.bold ?? false) })}
+                      aria-pressed={selectedText.font?.bold ?? false}
+                      onClick={() => updateSelectedTextFont({ bold: !(selectedText.font?.bold ?? false) })}
                     >B</button>
                     <button
                       type="button"
                       className="is-italic"
                       aria-label="Italic"
-                      aria-pressed={selected.font?.italic ?? false}
-                      onClick={() => updateSelectedTextFont({ italic: !(selected.font?.italic ?? false) })}
+                      aria-pressed={selectedText.font?.italic ?? false}
+                      onClick={() => updateSelectedTextFont({ italic: !(selectedText.font?.italic ?? false) })}
                     >I</button>
                     <select
                       aria-label="Text alignment"
-                      value={selected.horizontalAlign}
+                      value={selectedText.horizontalAlign}
                       onChange={(event) => updateElement({
-                        ...selected,
+                        ...selectedText,
                         horizontalAlign: event.target.value as "left" | "center" | "right",
                       })}
                     >
@@ -1262,12 +1290,12 @@ function EditorWorkspace({ presentationId: initialPresentationId, jobId }: { pre
                   <p>Double-click the text to edit it in place. Drag or resize it when selected.</p>
                   {renderElementActions()}
                 </div>
-              ) : selected?.type === "image" ? (
+              ) : selectedImage ? (
                 <div className="property-form">
                   <label htmlFor="selected-image-fit">Image fit</label>
                   <select
                     id="selected-image-fit"
-                    value={selected.fit}
+                    value={selectedImage.fit}
                     onChange={(event) => updateSelectedImage({ fit: event.target.value as "contain" | "cover" | "fill" })}
                   >
                     <option value="cover">Cover frame</option>
@@ -1279,19 +1307,19 @@ function EditorWorkspace({ presentationId: initialPresentationId, jobId }: { pre
                     id="selected-image-alt"
                     className="property-form__short-textarea"
                     maxLength={1000}
-                    value={selected.alt}
+                    value={selectedImage.alt}
                     placeholder="Describe the image for accessibility"
                     onChange={(event) => updateSelectedImage({ alt: event.target.value })}
                   />
                   <p>Drag, resize, or rotate the image directly on the canvas.</p>
                   {renderElementActions()}
                 </div>
-              ) : selected?.type === "shape" ? (
+              ) : selectedShape ? (
                 <div className="property-form">
                   <label htmlFor="selected-shape-type">Shape</label>
                   <select
                     id="selected-shape-type"
-                    value={selected.shape}
+                    value={selectedShape.shape}
                     onChange={(event) => updateSelectedShape({
                       shape: event.target.value as "rectangle" | "ellipse" | "triangle" | "diamond",
                     })}
@@ -1308,12 +1336,12 @@ function EditorWorkspace({ presentationId: initialPresentationId, jobId }: { pre
                         <input
                           aria-label="Shape fill color"
                           type="color"
-                          value={selected.fill?.color ?? document.theme.colors.primary}
+                          value={selectedShape.fill?.color ?? document.theme.colors.primary}
                           onChange={(event) => updateSelectedShape({
-                            fill: { color: event.target.value, opacity: selected.fill?.opacity ?? 1 },
+                            fill: { color: event.target.value, opacity: selectedShape.fill?.opacity ?? 1 },
                           })}
                         />
-                        <span>{selected.fill?.color ?? document.theme.colors.primary}</span>
+                        <span>{selectedShape.fill?.color ?? document.theme.colors.primary}</span>
                       </span>
                     </label>
                     <label>
@@ -1322,8 +1350,8 @@ function EditorWorkspace({ presentationId: initialPresentationId, jobId }: { pre
                         type="number"
                         min="0"
                         max="200"
-                        disabled={selected.shape !== "rectangle"}
-                        value={selected.cornerRadius}
+                        disabled={selectedShape.shape !== "rectangle"}
+                        value={selectedShape.cornerRadius}
                         onChange={(event) => {
                           const radius = Number(event.target.value);
                           if (Number.isFinite(radius)) updateSelectedShape({ cornerRadius: Math.min(200, Math.max(0, radius)) });

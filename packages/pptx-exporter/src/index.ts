@@ -88,6 +88,10 @@ function textRuns(runs: TextRun[], baseFont?: Font) {
   }));
 }
 
+function flattenRuns(runs: TextRun[]): string {
+  return runs.map((run) => run.text).join("");
+}
+
 function position(element: SlideElement, offset: Offset) {
   return {
     x: inches(offset.x + element.position.x),
@@ -138,6 +142,209 @@ function chartType(pptx: PptxInstance, element: ChartElement) {
   }
 }
 
+function addTextElement(slide: PptxSlide, element: Extract<SlideElement, { type: "text" }>, box: ReturnType<typeof position>, objectName: string): void {
+  slide.addText(textRuns(element.runs, element.font), {
+    ...box,
+    objectName,
+    rotate: element.rotation,
+    margin: 0,
+    breakLine: false,
+    fit: "shrink",
+    align: element.horizontalAlign,
+    valign: element.verticalAlign,
+    fill: shapeFill(element.fill),
+    ...(element.stroke ? { line: lineOptions(element.stroke) } : {}),
+  });
+}
+
+function addTextListElement(slide: PptxSlide, element: Extract<SlideElement, { type: "text-list" }>, box: ReturnType<typeof position>, objectName: string): void {
+  const runs = element.items.map((item, index) => ({
+    text: flattenRuns(item),
+    options: {
+      ...fontOptions(element.font),
+      breakLine: index < element.items.length - 1,
+      ...(element.marker === "none"
+        ? {}
+        : { bullet: element.marker === "bullet" ? true : { type: "number" as const } }),
+    },
+  }));
+  slide.addText(runs, {
+    ...box,
+    objectName,
+    rotate: element.rotation,
+    margin: 0,
+    fit: "shrink",
+  });
+}
+
+function addShapeElement(
+  pptx: PptxInstance,
+  slide: PptxSlide,
+  element: Extract<SlideElement, { type: "shape" }>,
+  box: ReturnType<typeof position>,
+  objectName: string,
+): void {
+  const shape =
+    element.shape === "rectangle"
+      ? element.cornerRadius > 0
+        ? pptx.ShapeType.roundRect
+        : pptx.ShapeType.rect
+      : element.shape === "ellipse"
+        ? pptx.ShapeType.ellipse
+        : element.shape === "triangle"
+          ? pptx.ShapeType.triangle
+          : pptx.ShapeType.diamond;
+  slide.addShape(shape, {
+    ...box,
+    objectName,
+    rotate: element.rotation,
+    fill: shapeFill(element.fill),
+    ...(element.stroke ? { line: lineOptions(element.stroke) } : {}),
+  });
+}
+
+function addLineElement(
+  pptx: PptxInstance,
+  slide: PptxSlide,
+  element: Extract<SlideElement, { type: "line" }>,
+  box: ReturnType<typeof position>,
+  objectName: string,
+): void {
+  slide.addShape(pptx.ShapeType.line, {
+    ...box,
+    objectName,
+    rotate: element.rotation,
+    line: {
+      ...lineOptions(element.stroke),
+      beginArrowType: element.startArrow ? "triangle" : "none",
+      endArrowType: element.endArrow ? "triangle" : "none",
+    },
+  });
+}
+
+async function addImageElement(
+  slide: PptxSlide,
+  element: Extract<SlideElement, { type: "image" }>,
+  box: ReturnType<typeof position>,
+  objectName: string,
+  slideId: string,
+  warnings: ExportWarning[],
+  resolveAsset: AssetResolver | undefined,
+): Promise<void> {
+  const asset = await resolveAsset?.(element.assetId);
+  if (!asset) {
+    warnings.push({
+      code: "asset-missing",
+      slideId,
+      elementId: element.id,
+      message: `Asset ${element.assetId} was not resolved; image omitted.`,
+    });
+    return;
+  }
+  if (element.focusX !== 0.5 || element.focusY !== 0.5 || element.cropScale !== 1) {
+    warnings.push({
+      code: "image-focus-unsupported",
+      slideId,
+      elementId: element.id,
+      message: "Custom image focus and crop scale are not represented by the current PPTX adapter.",
+    });
+  }
+  slide.addImage({
+    ...asset,
+    ...box,
+    objectName,
+    altText: element.alt,
+    rotate: element.rotation,
+    flipH: element.flipHorizontal,
+    flipV: element.flipVertical,
+    transparency: transparency(element.opacity),
+    ...(element.fit === "fill"
+      ? {}
+      : { sizing: { type: element.fit, w: box.w, h: box.h } }),
+  });
+}
+
+function addTableElement(
+  slide: PptxSlide,
+  element: Extract<SlideElement, { type: "table" }>,
+  box: ReturnType<typeof position>,
+  objectName: string,
+  slideId: string,
+  warnings: ExportWarning[],
+): void {
+  const rows = element.rows.map((row) =>
+    row.map((cell) => {
+      if (cell.runs.length > 1 || cell.runs.some((run) => run.font)) {
+        warnings.push({
+          code: "rich-table-text-flattened",
+          slideId,
+          elementId: element.id,
+          message: "Per-run table cell formatting was flattened to cell formatting.",
+        });
+      }
+      return {
+        text: flattenRuns(cell.runs),
+        options: {
+          ...fontOptions(cell.font),
+          align: cell.horizontalAlign,
+          ...(cell.fill ? { fill: shapeFill(cell.fill) } : {}),
+        },
+      };
+    }),
+  );
+  slide.addTable(rows, {
+    ...box,
+    objectName,
+    margin: 2,
+    border: { color: "D6DCE5", pt: 1 },
+    ...(element.columnWidths
+      ? { colW: element.columnWidths.map(inches) }
+      : {}),
+    ...(element.rowHeights ? { rowH: element.rowHeights.map(inches) } : {}),
+  });
+}
+
+function addChartElement(
+  pptx: PptxInstance,
+  slide: PptxSlide,
+  element: Extract<SlideElement, { type: "chart" }>,
+  box: ReturnType<typeof position>,
+  objectName: string,
+): void {
+  slide.addChart(
+    chartType(pptx, element),
+    element.series.map((series) => ({
+      name: series.name,
+      labels: element.categories,
+      values: series.values,
+    })),
+    {
+      ...box,
+      objectName,
+      showLegend: element.showLegend,
+      showTitle: false,
+      showValue: false,
+      catAxisLabelFontFace: "Arial",
+      valAxisLabelFontFace: "Arial",
+      ...(element.chartType === "horizontal-bar" ? { barDir: "bar" as const } : {}),
+      ...(element.chartType === "stacked-bar"
+        ? { grouping: "stacked" as const, barDir: "col" as const }
+        : {}),
+      ...(element.colors ? { chartColors: element.colors.map(color) } : {}),
+    },
+  );
+}
+
+function addSvgElement(
+  slide: PptxSlide,
+  element: Extract<SlideElement, { type: "svg" }>,
+  box: ReturnType<typeof position>,
+  objectName: string,
+): void {
+  const data = `data:image/svg+xml;base64,${Buffer.from(element.svg).toString("base64")}`;
+  slide.addImage({ data, ...box, objectName, altText: element.alt, rotate: element.rotation });
+}
+
 async function addElement(
   pptx: PptxInstance,
   slide: PptxSlide,
@@ -152,174 +359,36 @@ async function addElement(
 
   switch (element.type) {
     case "text":
-      slide.addText(textRuns(element.runs, element.font), {
-        ...box,
-        objectName,
-        rotate: element.rotation,
-        margin: 0,
-        breakLine: false,
-        fit: "shrink",
-        align: element.horizontalAlign,
-        valign: element.verticalAlign,
-        fill: element.fill ? shapeFill(element.fill) : { color: "FFFFFF", transparency: 100 },
-        ...(element.stroke ? { line: lineOptions(element.stroke) } : {}),
-      });
+      addTextElement(slide, element, box, objectName);
       return;
 
-    case "text-list": {
-      const runs = element.items.map((item, index) => ({
-        text: item.map((run) => run.text).join(""),
-        options: {
-          ...fontOptions(element.font),
-          breakLine: index < element.items.length - 1,
-          ...(element.marker === "none"
-            ? {}
-            : { bullet: element.marker === "bullet" ? true : { type: "number" as const } }),
-        },
-      }));
-      slide.addText(runs, {
-        ...box,
-        objectName,
-        rotate: element.rotation,
-        margin: 0,
-        fit: "shrink",
-      });
+    case "text-list":
+      addTextListElement(slide, element, box, objectName);
       return;
-    }
 
-    case "shape": {
-      const shape =
-        element.shape === "rectangle"
-          ? element.cornerRadius > 0
-            ? pptx.ShapeType.roundRect
-            : pptx.ShapeType.rect
-          : element.shape === "ellipse"
-            ? pptx.ShapeType.ellipse
-            : element.shape === "triangle"
-              ? pptx.ShapeType.triangle
-              : pptx.ShapeType.diamond;
-      slide.addShape(shape, {
-        ...box,
-        objectName,
-        rotate: element.rotation,
-        fill: shapeFill(element.fill),
-        ...(element.stroke ? { line: lineOptions(element.stroke) } : {}),
-      });
+    case "shape":
+      addShapeElement(pptx, slide, element, box, objectName);
       return;
-    }
 
     case "line":
-      slide.addShape(pptx.ShapeType.line, {
-        ...box,
-        objectName,
-        rotate: element.rotation,
-        line: {
-          ...lineOptions(element.stroke),
-          beginArrowType: element.startArrow ? "triangle" : "none",
-          endArrowType: element.endArrow ? "triangle" : "none",
-        },
-      });
+      addLineElement(pptx, slide, element, box, objectName);
       return;
 
-    case "image": {
-      const asset = await resolveAsset?.(element.assetId);
-      if (!asset) {
-        warnings.push({
-          code: "asset-missing",
-          slideId,
-          elementId: element.id,
-          message: `Asset ${element.assetId} was not resolved; image omitted.`,
-        });
-        return;
-      }
-      if (element.focusX !== 0.5 || element.focusY !== 0.5 || element.cropScale !== 1) {
-        warnings.push({
-          code: "image-focus-unsupported",
-          slideId,
-          elementId: element.id,
-          message: "Custom image focus and crop scale are not represented by the current PPTX adapter.",
-        });
-      }
-      slide.addImage({
-        ...asset,
-        ...box,
-        objectName,
-        altText: element.alt,
-        rotate: element.rotation,
-        flipH: element.flipHorizontal,
-        flipV: element.flipVertical,
-        transparency: transparency(element.opacity),
-        ...(element.fit === "fill"
-          ? {}
-          : { sizing: { type: element.fit, w: box.w, h: box.h } }),
-      });
+    case "image":
+      await addImageElement(slide, element, box, objectName, slideId, warnings, resolveAsset);
       return;
-    }
 
-    case "table": {
-      const rows = element.rows.map((row) =>
-        row.map((cell) => {
-          if (cell.runs.length > 1 || cell.runs.some((run) => run.font)) {
-            warnings.push({
-              code: "rich-table-text-flattened",
-              slideId,
-              elementId: element.id,
-              message: "Per-run table cell formatting was flattened to cell formatting.",
-            });
-          }
-          return {
-            text: cell.runs.map((run) => run.text).join(""),
-            options: {
-              ...fontOptions(cell.font),
-              align: cell.horizontalAlign,
-              ...(cell.fill ? { fill: shapeFill(cell.fill) } : {}),
-            },
-          };
-        }),
-      );
-      slide.addTable(rows, {
-        ...box,
-        objectName,
-        margin: 2,
-        border: { color: "D6DCE5", pt: 1 },
-        ...(element.columnWidths
-          ? { colW: element.columnWidths.map(inches) }
-          : {}),
-        ...(element.rowHeights ? { rowH: element.rowHeights.map(inches) } : {}),
-      });
+    case "table":
+      addTableElement(slide, element, box, objectName, slideId, warnings);
       return;
-    }
 
     case "chart":
-      slide.addChart(
-        chartType(pptx, element),
-        element.series.map((series) => ({
-          name: series.name,
-          labels: element.categories,
-          values: series.values,
-        })),
-        {
-          ...box,
-          objectName,
-          showLegend: element.showLegend,
-          showTitle: false,
-          showValue: false,
-          catAxisLabelFontFace: "Arial",
-          valAxisLabelFontFace: "Arial",
-          ...(element.chartType === "horizontal-bar" ? { barDir: "bar" as const } : {}),
-          ...(element.chartType === "stacked-bar"
-            ? { grouping: "stacked" as const, barDir: "col" as const }
-            : {}),
-          ...(element.colors ? { chartColors: element.colors.map(color) } : {}),
-        },
-      );
+      addChartElement(pptx, slide, element, box, objectName);
       return;
 
-    case "svg": {
-      const data = `data:image/svg+xml;base64,${Buffer.from(element.svg).toString("base64")}`;
-      slide.addImage({ data, ...box, objectName, altText: element.alt, rotate: element.rotation });
+    case "svg":
+      addSvgElement(slide, element, box, objectName);
       return;
-    }
 
     case "container": {
       slide.addShape(pptx.ShapeType.rect, {

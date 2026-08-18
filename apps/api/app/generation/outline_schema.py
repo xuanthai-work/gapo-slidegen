@@ -71,13 +71,20 @@ class GeneratedSlideRewriteResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _slide_count_instruction(request: OutlineRequest) -> str:
+def _slide_count_instruction(request: OutlineRequest, language: str) -> str:
     if request.slide_count is None:
+        if language == "vi":
+            return (
+                "Tự chọn số lượng slide phù hợp với nguồn và câu chuyện. "
+                "Ưu tiên 5 đến 12 slide. Chỉ vượt quá 12 khi nguồn thực sự cần thiết. Tối đa 30 slide."
+            )
         return (
             "Choose the total slide count yourself based on the source and narrative. "
             "Prefer 5 to 12 slides. Use fewer for a narrow idea, and exceed 12 only when "
             "the supplied material genuinely requires it. Never exceed 30 slides."
         )
+    if language == "vi":
+        return f"Viết nội dung hoàn chỉnh cho đúng {request.slide_count} slide."
     return f"Write finished on-slide copy for exactly {request.slide_count} slides."
 
 
@@ -292,20 +299,7 @@ def build_story_prompt(
                     f"- Key takeaways to convey:\n- {takeaways_text}\n"
                 )
 
-    if language == "vi":
-        count_instruction = (
-            "Tự chọn số lượng slide phù hợp với nguồn và câu chuyện. "
-            "Ưu tiên 5 đến 12 slide. Chỉ vượt quá 12 khi nguồn thực sự cần thiết. Tối đa 30 slide."
-            if request.slide_count is None
-            else f"Viết nội dung hoàn chỉnh cho đúng {request.slide_count} slide."
-        )
-    else:
-        count_instruction = (
-            "Choose an appropriate slide count based on the source and narrative. "
-            "Prefer 5 to 12 slides. Exceed 12 only when the material genuinely requires it. Maximum 30 slides."
-            if request.slide_count is None
-            else f"Write finished on-slide copy for exactly {request.slide_count} slides."
-        )
+    count_instruction = _slide_count_instruction(request, language)
 
     return (
         f"You are a senior presentation strategist and copywriter. "

@@ -9,6 +9,8 @@ const nonNegativeNumber = finiteNumber.nonnegative();
 const normalizedNumber = finiteNumber.min(0).max(1);
 const entityId = z.string().trim().min(1).max(160);
 const color = z.string().trim().min(1).max(128);
+const horizontalAlignSchema = z.enum(["left", "center", "right"]);
+const verticalAlignSchema = z.enum(["top", "middle", "bottom"]);
 
 export const positionSchema = z.object({
   x: finiteNumber,
@@ -73,8 +75,8 @@ const textElementSchema = elementBaseSchema.extend({
   type: z.literal("text"),
   runs: z.array(textRunSchema),
   font: fontSchema.optional(),
-  horizontalAlign: z.enum(["left", "center", "right"]).default("left"),
-  verticalAlign: z.enum(["top", "middle", "bottom"]).default("top"),
+  horizontalAlign: horizontalAlignSchema.default("left"),
+  verticalAlign: verticalAlignSchema.default("top"),
   fill: fillSchema.optional(),
   stroke: strokeSchema.optional(),
 });
@@ -117,7 +119,7 @@ const tableCellSchema = z.object({
   runs: z.array(textRunSchema),
   font: fontSchema.optional(),
   fill: fillSchema.optional(),
-  horizontalAlign: z.enum(["left", "center", "right"]).default("left"),
+  horizontalAlign: horizontalAlignSchema.default("left"),
 });
 
 const tableElementSchema = elementBaseSchema.extend({

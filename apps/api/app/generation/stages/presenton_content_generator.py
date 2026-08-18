@@ -1,5 +1,4 @@
 from typing import Mapping
-from uuid import uuid4
 
 from ..presenton_template import (
     MODERN_CONTENT_LAYOUT_IDS,
@@ -24,6 +23,18 @@ class PresentonContentGenerator:
     def _layout_exists(self, layout_id: str) -> bool:
         return layout_id in self.adapter.layout_ids
 
+    @staticmethod
+    def _is_visual_role(role: str | None) -> bool:
+        return role in {"hook", "problem", "solution", "case-study", "cta", "quote"}
+
+    @staticmethod
+    def _has_metric_data(item: StoryOutlineItem) -> bool:
+        return any(
+            (block.get("label") or block.get("value"))
+            for block in (item.blocks or [])
+            if isinstance(block, dict)
+        )
+
     def _select_layout(
         self,
         item: StoryOutlineItem,
@@ -38,13 +49,8 @@ class PresentonContentGenerator:
             _is_card_grid,
         )
 
-        # Helpers describing the content shape produced for this slide.
         block_count = len(item.blocks) if item.blocks else 0
-        has_metric_blocks = any(
-            (block.get("label") or block.get("value"))
-            for block in (item.blocks or [])
-            if isinstance(block, dict)
-        )
+        has_metric_blocks = self._has_metric_data(item)
         has_assets = bool(self._slide_assets(assets, slide_index))
 
         # 1. Explicit layout id from the outline (e.g. chosen by planner/LLM)
@@ -60,7 +66,6 @@ class PresentonContentGenerator:
         candidates: tuple[str, ...] = ()
         if item.role:
             candidates = ROLE_LAYOUT_CANDIDATES.get(item.role, ())
-        visual_roles = {"hook", "problem", "solution", "case-study", "cta", "quote"}
         for candidate in candidates:
             if not self._layout_exists(candidate):
                 continue
@@ -69,7 +74,7 @@ class PresentonContentGenerator:
             if has_metric_blocks and not _has_metric_slots(candidate) and _is_card_grid(candidate):
                 # Prefer metric layouts when blocks carry label/value data.
                 continue
-            if _has_media_slot(candidate) and not has_assets and item.role not in visual_roles:
+            if _has_media_slot(candidate) and not has_assets and not self._is_visual_role(item.role):
                 # Non-visual roles should not leave an empty media panel when no
                 # assets are resolved.
                 continue
@@ -87,22 +92,22 @@ class PresentonContentGenerator:
         # 6. Rotating fallback for variety
         return MODERN_CONTENT_LAYOUT_IDS[(index - 1) % len(MODERN_CONTENT_LAYOUT_IDS)]
 
-    def _compile_slide(
+    def _build_slide(
         self,
+        request: GenerationRequest,
         item: StoryOutlineItem,
         *,
         index: int,
         total: int,
         assets: Mapping[tuple[int, str], str],
     ) -> dict[str, object]:
-        blocks = item.blocks or None
         return self.adapter.compile_slide(
             self._select_layout(item, index, assets=assets, slide_index=index),
             title=item.title or (request.title if index == 0 else f"Key point {index}"),
             content=item.content,
             slide_index=index,
             slide_count=total,
-            blocks=blocks if blocks else None,
+            blocks=item.blocks or None,
             assets=self._slide_assets(assets, index),
             role=item.role,
             budgets=item.content_budget,
@@ -116,23 +121,10 @@ class PresentonContentGenerator:
         assets: Mapping[tuple[int, str], str],
     ) -> list[dict[str, object]]:
         items = outline.items
-        title_item = items[0] if items else StoryOutlineItem(id=str(uuid4()), title=request.title, content="")
         total = len(items)
         slides: list[dict[str, object]] = []
         for index, item in enumerate(items, start=0):
-            slides.append(
-                self.adapter.compile_slide(
-                    self._select_layout(item, index, assets=assets, slide_index=index),
-                    title=item.title or (request.title if index == 0 else f"Key point {index}"),
-                    content=item.content,
-                    slide_index=index,
-                    slide_count=total,
-                    blocks=(item.blocks or None) if item.blocks else None,
-                    assets=self._slide_assets(assets, index),
-                    role=item.role,
-                    budgets=item.content_budget,
-                )
-            )
+            slides.append(self._build_slide(request, item, index=index, total=total, assets=assets))
         return slides
 
     def render(

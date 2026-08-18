@@ -115,6 +115,42 @@ class GenerationService:
     def __init__(self, session: Session) -> None:
         self.session = session
 
+    def _jobs(self) -> JobRepository:
+        return JobRepository(self.session)
+
+    def _enqueue_generation_job(
+        self,
+        *,
+        owner_id: UUID,
+        source_id: UUID | None,
+        payload: dict[str, object],
+    ) -> GenerationJob:
+        return self._jobs().enqueue(
+            owner_id=owner_id,
+            source_id=source_id,
+            job_type=JobType.GENERATE,
+            payload=payload,
+        )
+
+    def _owned_presentation_id(self, presentation_id: UUID, owner_id: UUID) -> UUID | None:
+        return self.session.scalar(
+            select(PresentationRecord.id).where(
+                PresentationRecord.id == presentation_id,
+                PresentationRecord.owner_id == owner_id,
+            )
+        )
+
+    def _assert_all_assets_owned(self, *, owner_id: UUID, asset_ids: set[UUID]) -> None:
+        if not asset_ids:
+            return
+        owned_asset_count = self.session.scalar(
+            select(func.count())
+            .select_from(AssetRecord)
+            .where(AssetRecord.owner_id == owner_id, AssetRecord.id.in_(asset_ids))
+        )
+        if owned_asset_count != len(asset_ids):
+            raise PresentationAssetNotFound("One or more image assets are unavailable.")
+
     def enqueue(
         self,
         *,
@@ -126,10 +162,9 @@ class GenerationService:
         source = self.session.scalar(build_owned_source_query(source_id, user.id))
         if source is None:
             raise SourceNotFound("Source not found.")
-        return JobRepository(self.session).enqueue(
+        return self._enqueue_generation_job(
             owner_id=user.id,
             source_id=source.id,
-            job_type=JobType.GENERATE,
             payload={"language": language, "theme_id": theme_id},
         )
 
@@ -143,10 +178,9 @@ class GenerationService:
         outline = self.session.scalar(build_owned_outline_query(outline_id, user.id))
         if outline is None:
             raise SourceNotFound("Outline not found.")
-        return JobRepository(self.session).enqueue(
+        return self._enqueue_generation_job(
             owner_id=user.id,
             source_id=outline.source_id,
-            job_type=JobType.GENERATE,
             payload={
                 "outline_id": str(outline.id),
                 "outline": outline.items,
@@ -158,17 +192,17 @@ class GenerationService:
         )
 
     def get_job(self, job_id: UUID, user: User) -> GenerationJob | None:
-        return JobRepository(self.session).get_owned(job_id, user.id)
+        return self._jobs().get_owned(job_id, user.id)
 
     def list_generation_jobs(self, user: User, limit: int = 20) -> list[GenerationJob]:
-        return JobRepository(self.session).list_owned(
+        return self._jobs().list_owned(
             user.id,
             job_type=JobType.GENERATE,
             limit=limit,
         )
 
     def cancel_job(self, job_id: UUID, user: User) -> GenerationJob:
-        job = JobRepository(self.session).get_owned(job_id, user.id)
+        job = self._jobs().get_owned(job_id, user.id)
         if job is None:
             raise JobNotFound("Job not found.")
         if job.status is JobStatus.CANCELED:
@@ -199,14 +233,7 @@ class GenerationService:
         document: dict[str, object],
     ) -> PresentationRecord:
         asset_ids = collect_asset_ids(document)
-        if asset_ids:
-            owned_asset_count = self.session.scalar(
-                select(func.count())
-                .select_from(AssetRecord)
-                .where(AssetRecord.owner_id == user.id, AssetRecord.id.in_(asset_ids))
-            )
-            if owned_asset_count != len(asset_ids):
-                raise PresentationAssetNotFound("One or more image assets are unavailable.")
+        self._assert_all_assets_owned(owner_id=user.id, asset_ids=asset_ids)
         record = self.session.scalar(
             build_update_presentation_statement(
                 presentation_id,
@@ -217,12 +244,7 @@ class GenerationService:
         )
         if record is not None:
             return record
-        exists = self.session.scalar(
-            select(PresentationRecord.id).where(
-                PresentationRecord.id == presentation_id,
-                PresentationRecord.owner_id == user.id,
-            )
-        )
+        exists = self._owned_presentation_id(presentation_id, user.id)
         if exists is None:
             raise PresentationNotFound("Presentation not found.")
         raise PresentationConflict("Presentation changed in another session. Reload before saving again.")
@@ -274,12 +296,7 @@ class GenerationService:
         )
         if deleted_id is not None:
             return
-        exists = self.session.scalar(
-            select(PresentationRecord.id).where(
-                PresentationRecord.id == presentation_id,
-                PresentationRecord.owner_id == user.id,
-            )
-        )
+        exists = self._owned_presentation_id(presentation_id, user.id)
         if exists is None:
             raise PresentationNotFound("Presentation not found.")
         raise PresentationConflict(

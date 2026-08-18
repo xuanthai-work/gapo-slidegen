@@ -70,11 +70,24 @@ export function Dashboard() {
   const [renameDraft, setRenameDraft] = useState("");
   const [presentationActionId, setPresentationActionId] = useState<string | null>(null);
   const [jobs, setJobs] = useState<Record<string, GenerationJob>>({});
-  const [streamSlides, setStreamSlides] = useState<Record<string, Array<{ index: number; title: string; role: string }>>>({});
   const fileInput = useRef<HTMLInputElement>(null);
-  const pollTimer = useRef<number | null>(null);
-  const pollingJobId = useRef<string | null>(null);
-  const eventSourceRef = useRef<EventSource | null>(null);
+
+  async function runSubmission(
+    task: () => Promise<void>,
+    fallbackError: string,
+    onFinally?: () => void,
+  ) {
+    setSubmitting(true);
+    setError(null);
+    try {
+      await task();
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : fallbackError);
+    } finally {
+      setSubmitting(false);
+      onFinally?.();
+    }
+  }
 
   useEffect(() => {
     Promise.all([
@@ -116,16 +129,9 @@ export function Dashboard() {
       .finally(() => setLoading(false));
   }, []);
 
-  useEffect(() => () => {
-    pollingJobId.current = null;
-    if (pollTimer.current !== null) window.clearTimeout(pollTimer.current);
-  }, []);
-
   async function createTextSource(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setSubmitting(true);
-    setError(null);
-    try {
+    await runSubmission(async () => {
       const source = await apiFetch<StoredSource>("/v1/sources/text", {
         method: "POST",
         body: JSON.stringify({
@@ -137,17 +143,11 @@ export function Dashboard() {
       setTitle("");
       setText("");
       await startGeneration(source, themeId);
-    } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : "Could not create the source.");
-    } finally {
-      setSubmitting(false);
-    }
+    }, "Could not create the source.");
   }
 
   async function uploadFile(file: File) {
-    setSubmitting(true);
-    setError(null);
-    try {
+    await runSubmission(async () => {
       const body = new FormData();
       body.append("file", file);
       const source = await apiFetch<StoredSource>("/v1/sources/files", {
@@ -155,114 +155,14 @@ export function Dashboard() {
         body,
       });
       await startGeneration(source, themeId);
-    } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : "Could not upload the document.");
-    } finally {
-      setSubmitting(false);
+    }, "Could not upload the document.", () => {
       if (fileInput.current) fileInput.current.value = "";
-    }
+    });
   }
 
   async function logout() {
     await apiFetch<void>("/v1/auth/logout", { method: "POST" }).catch(() => undefined);
     window.location.replace("/login");
-  }
-
-  function closeEventStream() {
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
-      eventSourceRef.current = null;
-    }
-  }
-
-  function trackJob(sourceId: string, jobId: string) {
-    pollingJobId.current = jobId;
-    if (pollTimer.current !== null) window.clearTimeout(pollTimer.current);
-    closeEventStream();
-
-    const url = `/api/jobs/${jobId}/events`;
-    console.log("[SSE] connecting", url);
-    const source = new EventSource(url);
-    eventSourceRef.current = source;
-
-    source.addEventListener("open", () => {
-      console.log("[SSE] open", jobId);
-    });
-
-    source.addEventListener("progress", (event) => {
-      console.log("[SSE] progress", event.data);
-      if (pollingJobId.current !== jobId) {
-        closeEventStream();
-        return;
-      }
-      try {
-        const job = JSON.parse(event.data) as GenerationJob;
-        setJobs((current) => ({ ...current, [sourceId]: job }));
-        if (job.status === "succeeded" && job.result?.presentation_id) {
-          pollingJobId.current = null;
-          closeEventStream();
-          window.location.assign(`/editor?presentation=${job.result.presentation_id}`);
-          return;
-        }
-        if (job.status === "failed" || job.status === "canceled") {
-          pollingJobId.current = null;
-          closeEventStream();
-        }
-      } catch {
-        // Ignore malformed SSE payload and let the connection continue.
-      }
-    });
-
-    source.addEventListener("slide", (event) => {
-      console.log("[SSE] slide", event.data);
-      if (pollingJobId.current !== jobId) {
-        closeEventStream();
-        return;
-      }
-      try {
-        const payload = JSON.parse(event.data) as {
-          stage: string;
-          message: string;
-          slide_count: number;
-          latest_slide: Record<string, unknown> | null;
-          slides: Array<Record<string, unknown>>;
-        };
-        const slides = payload.slides.map((slide, index) => {
-          const preview = extractSlidePreview(slide);
-          return { index, ...preview };
-        });
-        setStreamSlides((current) => ({ ...current, [sourceId]: slides }));
-      } catch {
-        // Ignore malformed slide payload.
-      }
-    });
-
-    source.addEventListener("error", (event) => {
-      console.log("[SSE] error", event);
-      if (pollingJobId.current !== jobId) {
-        closeEventStream();
-        return;
-      }
-      // Fall back to one-time fetch on SSE errors, then retry SSE after a short delay.
-      closeEventStream();
-      void apiFetch<GenerationJob>(`/v1/jobs/${jobId}`)
-        .then((job) => {
-          setJobs((current) => ({ ...current, [sourceId]: job }));
-          if (job.status === "succeeded" && job.result?.presentation_id) {
-            pollingJobId.current = null;
-            window.location.assign(`/editor?presentation=${job.result.presentation_id}`);
-          } else if (job.status === "queued" || job.status === "running") {
-            pollTimer.current = window.setTimeout(() => trackJob(sourceId, jobId), 2000);
-          } else {
-            pollingJobId.current = null;
-          }
-        })
-        .catch((caught: unknown) => {
-          if (pollingJobId.current !== jobId) return;
-          setError(caught instanceof ApiError ? caught.message : "Could not read generation progress.");
-          pollTimer.current = window.setTimeout(() => trackJob(sourceId, jobId), 2000);
-        });
-    });
   }
 
   async function startGeneration(
@@ -296,15 +196,7 @@ export function Dashboard() {
       const job = await apiFetch<GenerationJob>(`/v1/jobs/${jobId}/cancel`, {
         method: "POST",
       });
-      pollingJobId.current = null;
-      if (pollTimer.current !== null) window.clearTimeout(pollTimer.current);
-      closeEventStream();
       setJobs((current) => ({ ...current, [sourceId]: job }));
-      setStreamSlides((current) => {
-        const next = { ...current };
-        delete next[sourceId];
-        return next;
-      });
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : "Could not cancel generation.");
     } finally {
@@ -366,81 +258,38 @@ export function Dashboard() {
   }
 
   const activeGenerationJob = activeGenerationSource ? jobs[activeGenerationSource.id] : undefined;
-
-function extractSlidePreview(slide: Record<string, unknown>): { title: string; role: string } {
-  let title = "";
-  if (typeof slide.title === "string" && slide.title.trim()) {
-    title = slide.title;
-  } else {
-    const elements = Array.isArray(slide.elements) ? slide.elements : [];
-    for (const element of elements) {
-      if (typeof element === "object" && element !== null) {
-        const el = element as Record<string, unknown>;
-        const runs = Array.isArray(el.runs) ? el.runs : [];
-        for (const run of runs) {
-          if (typeof run === "object" && run !== null && typeof (run as Record<string, unknown>).text === "string") {
-            const text = (run as Record<string, unknown>).text as string;
-            if (text.trim()) {
-              title = text.trim();
-              break;
-            }
-          }
-        }
-        if (title) break;
-      }
+  const activeGenerationStatus = activeGenerationJob?.status;
+  const activeGenerationJobId = activeGenerationJob?.id ?? "";
+  const generationBannerEyebrow = activeGenerationStatus === "failed"
+    ? "Generation failed"
+    : activeGenerationStatus === "canceled"
+      ? "Generation canceled"
+      : "Building presentation";
+  const generationBannerHeading = activeGenerationStatus === "failed"
+    || activeGenerationStatus === "canceled"
+    ? activeGenerationSource?.title ?? ""
+    : activeGenerationSource ? `“${activeGenerationSource.title}”` : "";
+  const generationBannerBody = (() => {
+    if (!activeGenerationSource) return "Starting generation…";
+    if (startingSourceId === activeGenerationSource.id || activeGenerationStatus === "queued") {
+      return "Queued — preparing your source…";
     }
-  }
-  const role = typeof slide.role === "string" ? slide.role : "";
-  return { title: title || "Slide", role };
-}
-
-function TypingSlidePreview({
-  number,
-  title,
-  role,
-  isActive,
-}: {
-  number: number;
-  title: string;
-  role: string;
-  isActive: boolean;
-}) {
-  const [displayed, setDisplayed] = useState(isActive ? "" : title);
-  const [showCursor, setShowCursor] = useState(isActive);
-
-  useEffect(() => {
-    if (!isActive) {
-      setDisplayed(title);
-      setShowCursor(false);
-      return;
+    if (activeGenerationStatus === "running") {
+      return "Planning the story…";
     }
-    setDisplayed("");
-    setShowCursor(true);
-    let index = 0;
-    const interval = window.setInterval(() => {
-      index += 1;
-      setDisplayed(title.slice(0, index));
-      if (index >= title.length) {
-        window.clearInterval(interval);
-        setShowCursor(false);
-      }
-    }, 45);
-    return () => window.clearInterval(interval);
-  }, [isActive, title]);
-
-  return (
-    <li className="generation-stream__slide">
-      <span className="generation-stream__number">{number}</span>
-      <div className="generation-stream__copy" style={{ minWidth: 0 }}>
-        <span className="generation-stream__title">
-          {displayed}
-          {showCursor ? <span className="generation-cursor" /> : null}
-        </span>
-        {role ? <span className="generation-stream__role">{role}</span> : null}
-      </div>
-    </li>
-  );
-}
+    if (activeGenerationStatus === "failed") {
+      return activeGenerationJob?.error_message || "The presentation could not be generated.";
+    }
+    if (activeGenerationStatus === "canceled") {
+      return "No presentation was saved from this job.";
+    }
+    return "Starting generation…";
+  })();
+  const generationBannerClassName = `generation-banner${
+    activeGenerationStatus === "failed" ? " generation-banner--failed" : ""
+  }${
+    activeGenerationStatus === "canceled" ? " generation-banner--canceled" : ""
+  }`;
 
   if (loading) {
     return (
@@ -612,96 +461,44 @@ function TypingSlidePreview({
 
         {activeGenerationSource ? (
           <section
-            className={`generation-banner${
-              activeGenerationJob?.status === "failed" ? " generation-banner--failed" : ""
-            }${
-              activeGenerationJob?.status === "canceled" ? " generation-banner--canceled" : ""
-            }`}
+            className={generationBannerClassName}
             aria-live="polite"
           >
             <span className="generation-banner__icon">
               <MagicWand size={20} />
             </span>
             <div className="generation-banner__content">
-              <p className="generation-banner__eyebrow">
-                {activeGenerationJob?.status === "failed"
-                  ? "Generation failed"
-                  : activeGenerationJob?.status === "canceled"
-                    ? "Generation canceled"
-                    : "Building presentation"}
-              </p>
-              <strong className="generation-banner__heading">
-                {activeGenerationJob?.status === "running" || activeGenerationJob?.status === "queued"
-                  ? `“${activeGenerationSource.title}”`
-                  : activeGenerationJob?.status === "failed" || activeGenerationJob?.status === "canceled"
-                    ? activeGenerationSource.title
-                    : `“${activeGenerationSource.title}”`}
-              </strong>
-              <p className="generation-banner__body">
-                {(() => {
-                  if (!activeGenerationSource) return "Starting generation…";
-                  const previewSlides = streamSlides[activeGenerationSource.id];
-                  const hasSlides = activeGenerationJob?.status === "running" && previewSlides && previewSlides.length > 0;
-                  if (startingSourceId === activeGenerationSource.id || activeGenerationJob?.status === "queued") {
-                    return "Queued — preparing your source…";
-                  }
-                  if (activeGenerationJob?.status === "running") {
-                    return hasSlides ? `Building ${previewSlides.length} slides…` : "Planning the story…";
-                  }
-                  if (activeGenerationJob?.status === "failed") {
-                    return activeGenerationJob.error_message || "The presentation could not be generated.";
-                  }
-                  if (activeGenerationJob?.status === "canceled") {
-                    return "No presentation was saved from this job.";
-                  }
-                  return "Starting generation…";
-                })()}
-              </p>
-              {(() => {
-                if (!activeGenerationSource || activeGenerationJob?.status !== "running") return null;
-                const previewSlides = streamSlides[activeGenerationSource.id];
-                if (previewSlides && previewSlides.length > 0) {
-                  return (
-                    <ol className="generation-stream" aria-live="polite" aria-label="Generated slides preview">
-                      {previewSlides.map((slide, listIndex) => (
-                        <TypingSlidePreview
-                          key={slide.index}
-                          number={slide.index + 1}
-                          title={slide.title}
-                          role={slide.role}
-                          isActive={listIndex === previewSlides.length - 1}
-                        />
-                      ))}
-                    </ol>
-                  );
-                }
-                return (
-                  <div
-                    className="generation-progress"
-                    role="progressbar"
-                    aria-label="Presentation generation progress"
-                    aria-valuemin={0}
-                    aria-valuemax={100}
-                    aria-valuenow={activeGenerationJob.progress}
-                  >
-                    <span style={{ width: `${activeGenerationJob.progress}%` }} />
-                  </div>
-                );
-              })()}
+              <p className="generation-banner__eyebrow">{generationBannerEyebrow}</p>
+              <strong className="generation-banner__heading">{generationBannerHeading}</strong>
+              <p className="generation-banner__body">{generationBannerBody}</p>
+              {activeGenerationStatus === "running" ? (
+                <div
+                  className="generation-progress"
+                  role="progressbar"
+                  aria-label="Presentation generation progress"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={activeGenerationJob?.progress ?? 0}
+                >
+                  <span style={{ width: `${activeGenerationJob?.progress ?? 0}%` }} />
+                </div>
+              ) : null}
             </div>
-            {activeGenerationJob?.status === "failed" || activeGenerationJob?.status === "canceled" ? (
+            {activeGenerationStatus === "failed" || activeGenerationStatus === "canceled" ? (
               <button className="button" onClick={() => void startGeneration(activeGenerationSource)}>
                 Retry
               </button>
-            ) : activeGenerationJob?.status === "queued" || activeGenerationJob?.status === "running" ? (
+            ) : activeGenerationStatus === "queued" || activeGenerationStatus === "running" ? (
               <button
                 className="button generation-cancel"
-                disabled={cancelingJobId === activeGenerationJob.id}
+                disabled={!activeGenerationJobId || cancelingJobId === activeGenerationJobId}
                 onClick={() =>
-                  void cancelGeneration(activeGenerationSource.id, activeGenerationJob.id)
+                  activeGenerationJobId
+                    ? void cancelGeneration(activeGenerationSource.id, activeGenerationJobId)
+                    : undefined
                 }
               >
-                {cancelingJobId === activeGenerationJob.id ? "Canceling…" : "Cancel"}
+                {cancelingJobId === activeGenerationJobId ? "Canceling…" : "Cancel"}
               </button>
             ) : (
               <span className="generation-pulse" aria-hidden="true" />
