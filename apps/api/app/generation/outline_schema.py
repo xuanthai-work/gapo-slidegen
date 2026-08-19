@@ -26,26 +26,25 @@ StoryLayout = Literal[
 
 
 class GeneratedSlideBlock(BaseModel):
-    heading: str = Field(min_length=1, max_length=160)
-    body: str = Field(min_length=1, max_length=600)
+    heading: str = Field(min_length=1, max_length=200)
+    body: str = Field(min_length=1, max_length=2_000)
     label: str = Field(default="", max_length=80)
     value: str = Field(default="", max_length=80)
 
 
 class ContentBudget(BaseModel):
     title_max_chars: int = Field(default=80, ge=10, le=200)
-    content_max_chars: int = Field(default=180, ge=20, le=500)
+    content_max_chars: int = Field(default=500, ge=20, le=2_000)
     block_heading_max_chars: int = Field(default=55, ge=10, le=120)
-    block_body_max_chars: int = Field(default=120, ge=20, le=300)
+    block_body_max_chars: int = Field(default=350, ge=20, le=1_000)
 
 
 class GeneratedOutlineItem(BaseModel):
     title: str = Field(min_length=1, max_length=160)
-    content: str = Field(min_length=1, max_length=500)
+    content: str = Field(min_length=1, max_length=2_000)
     layout: StoryLayout
     role: SlideRole | None = None
     layout_id: str | None = Field(default=None, max_length=160)
-    content_budget: ContentBudget = Field(default_factory=ContentBudget)
     blocks: list[GeneratedSlideBlock] = Field(max_length=6)
 
 
@@ -108,62 +107,62 @@ def _build_example(language: str) -> str:
         return """
 Ví dụ về cấu trúc slide đúng:
 
-Source: "Công ty phát hành ứng dụng học ngoại ngữ bằng AI. Ứng dụng giúp người dùng luyện nói thực tế, tự động sửa lỗi phát âm và đề xuất lộ trình cá nhân hóa."
+Source: "Công ty phát hành ứng dụng học ngoại ngữ bằng AI. Lớp truyền thống 30 học viên chỉ có 4 phút nói/người. Ứng dụng sửa phát âm ngay và đề xuất lộ trình theo lỗi thực tế."
 
 Slide 1 (cover):
 - title: "Luyện nói ngoại ngữ với AI"
-- content: "Nói tự nhiên, được sửa ngay, tiến bộ mỗi ngày."
+- content: "Ứng dụng nghe lời nói, sửa phát âm ngay, và xếp bài theo lỗi của từng người thay vì theo giáo trình cố định."
 - role: cover
 - layout: cover
 - blocks: []
 
 Slide 2 (problem):
-- title: "Học nói truyền thống bị tụt lại"
-- content: "Lớp đông, ít thời gian thực hành 1-1, người học dễ nản vì không được phản hồi kịp thời."
+- title: "Lớp đông không sửa kịp từng người"
+- content: "Trong lớp 30 học viên, mỗi người chỉ nói khoảng 4 phút. Không có phản hồi cá nhân nên lỗi phát âm bị giữ lại sang buổi sau, và lịch tối thứ Ba khiến nhân viên ca chiều phải bỏ buổi."
 - role: problem
 - layout: split-image
 - blocks:
-  1. heading: "Thiếu phản hồi cá nhân", body: "Giáo viên không thể sửa từng người trong lớp 30 học viên."
-  2. heading: "Lịch học cứng nhắc", body: "Học viên bỏ lỡ buổi học vì không khớp thời gian biểu."
+  1. heading: "Chỉ 4 phút nói mỗi buổi", body: "Giáo viên không sửa nổi từng người trong lớp 30 học viên, nên cùng một lỗi phát âm lặp lại tuần sau."
+  2. heading: "Lịch học cứng", body: "Buổi tối thứ Ba khiến nhân viên ca chiều phải bỏ buổi, không có slot bù trong tuần."
 
 Slide 3 (solution):
-- title: "AI đồng hành mọi lúc mọi nơi"
-- content: "AI lắng nghe, phân tích phát âm và điều chỉnh bài học theo tốc độ của từng người."
+- title: "AI sửa lỗi ngay khi vừa nói xong"
+- content: "Hệ thống chấm từng âm, chỉ ra lỗi, rồi chọn bài tiếp theo từ điểm yếu vừa ghi nhận. Người học nhận âm đúng để so ngay sau câu nói, không phải chờ đến buổi sau."
 - role: solution
 - layout: split-image
 - blocks:
-  1. heading: "Phản hồi tức thì", body: "Sửa lỗi phát âm ngay khi người dùng vừa nói xong."
-  2. heading: "Lộ trình cá nhân", body: "Bài tập được chọn dựa trên điểm yếu thực tế của bạn."
+  1. heading: "Phản hồi tức thì", body: "Lỗi phát âm được đánh dấu ngay sau câu nói, kèm âm đúng để so, nên người học sửa được trong cùng lượt luyện."
+  2. heading: "Lộ trình theo lỗi thật", body: "Bài sau ưu tiên âm và mẫu câu người học vừa sai, thay vì nhảy theo chương trong giáo trình cố định."
 """.strip()
     return """
 Example of a correct slide structure:
 
-Source: "A company launches an AI-powered language learning app. It helps users practice real conversations, automatically corrects pronunciation, and recommends personalized study paths."
+Source: "A company launches an AI-powered language learning app. Traditional classes of 30 leave each learner about 4 minutes of speaking time. The app corrects pronunciation immediately and builds a path from recorded errors."
 
 Slide 1 (cover):
 - title: "Speak a new language with AI"
-- content: "Practice naturally, get instant feedback, improve every day."
+- content: "The app listens, corrects pronunciation on the spot, and assigns the next drill from each learner's actual errors instead of a fixed textbook sequence."
 - role: cover
 - layout: cover
 - blocks: []
 
 Slide 2 (problem):
-- title: "Traditional speaking classes fall behind"
-- content: "Large groups leave little room for one-on-one practice, and learners lose motivation without timely feedback."
+- title: "Large classes leave almost no speaking time"
+- content: "In a class of 30, each learner speaks about 4 minutes. Without personal correction, the same pronunciation errors return the next week, and the Tuesday evening slot excludes shift workers who cannot attend."
 - role: problem
 - layout: split-image
 - blocks:
-  1. heading: "No personal feedback", body: "A teacher cannot correct every student in a class of thirty."
-  2. heading: "Fixed schedules", body: "Learners miss classes that do not fit their daily routine."
+  1. heading: "Four minutes of speaking", body: "A teacher cannot correct every student in a class of thirty, so the same missed sound is still there the following week."
+  2. heading: "Fixed Tuesday evening slots", body: "Shift workers miss the only weekly session that does not match their roster, and there is no makeup slot in the same week."
 
 Slide 3 (solution):
-- title: "An AI tutor available anywhere"
-- content: "AI listens, analyzes pronunciation, and adapts lessons to each learner's pace."
+- title: "Correction happens on the same utterance"
+- content: "The tutor scores the recording, marks the missed sound, and chooses the next exercise from that error instead of a fixed textbook sequence. The learner hears the correct model immediately after speaking, rather than waiting until the next class."
 - role: solution
 - layout: split-image
 - blocks:
-  1. heading: "Instant feedback", body: "Pronunciation mistakes are corrected the moment they happen."
-  2. heading: "Personalized path", body: "Exercises target the exact weaknesses holding you back."
+  1. heading: "Immediate pronunciation marks", body: "The missed sound is highlighted as soon as the sentence ends, with a correct model beside it so the learner can retry in the same turn."
+  2. heading: "Path from real errors", body: "The next drill prioritizes the sounds and patterns the learner just missed, instead of advancing to the next textbook chapter."
 """.strip()
 
 
@@ -173,28 +172,28 @@ def _build_guidance(language: str) -> str:
         return """
 Hướng dẫn theo vai trò từng slide:
 
-- cover: tiêu đề ngắn gọn, gây tò mò; content là 1 câu giá trị rõ ràng; không blocks.
-- problem: nêu điểm đau thực tế bằng ngôn ngữ người dùng cảm nhận được; 2 blocks với số liệu/cụ thể.
-- solution: trình bày cách sản phẩm giải quyết problem; 2 blocks với lợi ích khác biệt.
-- big-stat: 1 con số/chỉ số ấn tượng; dùng blocks với label + value; content giải thích ý nghĩa.
-- comparison: so sánh rõ ràng 2 phương án; 2-4 blocks tương phản.
-- features: liệt kê 4 tính năng chính; mỗi block là 1 lợi ích, không chỉ tên tính năng.
-- quote: nội dung là câu quote ngắn, ý nghĩa; không blocks.
-- cta: kêu gọi hành động cụ thể; content là lý do hành động ngay.
-- summary: 4 điểm chính người xem cần nhớ; content là takeaway cuối.
+- cover: tiêu đề ngắn; content 2 câu nêu đề bài và phạm vi; không blocks.
+- problem: nêu điểm đau bằng chi tiết từ nguồn, ít nhất 2 câu; 2-4 blocks với số liệu/tên riêng/điều kiện.
+- solution: cách giải quyết gắn với problem, ít nhất 2 câu; 2-4 blocks với cơ chế cụ thể, không khẩu hiệu.
+- big-stat: 1 chỉ số từ nguồn; blocks dùng label + value; content giải thích ý nghĩa.
+- comparison: 2-4 blocks tương phản, mỗi bên một fact.
+- features: 2-4 blocks; mỗi block là năng lực kèm cách hoạt động, không chỉ tên tính năng.
+- quote: câu trích dẫn ngắn; không blocks.
+- cta: hành động cụ thể; content nêu điều kiện hoặc bước tiếp theo.
+- summary: 2-4 điểm cần nhớ, mỗi điểm một fact; không slogan.
 """.strip()
     return """
 Role-by-role guidance:
 
-- cover: short, curiosity-driven title; one-line value proposition as content; no blocks.
-- problem: describe a real pain point in language the audience feels; 2 blocks with specifics.
-- solution: explain how the product removes that pain; 2 blocks with differentiated benefits.
-- big-stat: one impressive metric; use blocks with label + value; content explains why it matters.
-- comparison: contrast two clear options; 2-4 blocks that highlight the contrast.
-- features: list 4 main capabilities; each block is a benefit, not just a feature name.
-- quote: content is a short, meaningful quote; no blocks.
-- cta: a specific call to action; content explains why act now.
-- summary: 4 takeaways the audience should remember; content is the final takeaway.
+- cover: short title; 2 sentences stating the topic and scope; no blocks.
+- problem: a real pain with source detail, at least two sentences of content; 2-4 blocks with numbers, names, or conditions.
+- solution: how the approach removes that pain, at least two sentences of content; 2-4 blocks with mechanisms, not slogans.
+- big-stat: one source metric; blocks use label + value; content explains what the number means.
+- comparison: 2-4 contrasting blocks, each with a fact.
+- features: 2-4 blocks; each block is a capability plus how it works, not a feature name alone.
+- quote: a short attributed quote; no blocks.
+- cta: a specific action; content states the next step or condition.
+- summary: 2-4 memorable facts, not slogans.
 """.strip()
 
 
@@ -216,20 +215,28 @@ def _build_budget_rules(language: str) -> str:
     if language == "vi":
         return """
 Quy tắc ngân sách ký tự (bắt buộc tuân thủ):
-- Tiêu đề slide phải ngắn gọn, gây ấn tượng, không quá 80 ký tự.
-- content là câu takeaway chính, không quá 180 ký tự.
+- Tiêu đề slide không quá 80 ký tự.
+- content là đoạn giải thích có fact từ nguồn, không quá 500 ký tự, không phải slogan.
+- Trừ cover và quote, content phải có ít nhất 2 câu và khoảng 180 ký tự; không để đoạn văn nửa vời.
+- Mỗi slide nội dung (trừ cover và quote) phải có 2-4 blocks.
 - Mỗi block heading không quá 55 ký tự.
-- Mỗi block body không quá 120 ký tự.
-- Trước khi trả JSON, hãy tự kiểm tra: đếm ký tự của từng chuỗi, nếu vượt ngân sách thì viết lại cho gọn.
-- Không được để nội dung trùng lặp giữa title, content và block body.
+- Mỗi block body ít nhất một câu có số liệu, tên riêng, hoặc điều kiện từ nguồn khi nguồn có, và không quá 350 ký tự.
+- Dùng hết chỗ trống. Slogan ngắn là lỗi; thiếu fact từ nguồn tệ hơn việc viết hơi dài.
+- Gắn content và blocks vào fact, tên riêng và số liệu từ nguồn.
+- Không viết slide chỉ gồm slogan.
+- Không lặp cùng một câu giữa title, content và block body.
 """.strip()
     return """
 Character budget rules (strictly enforced):
-- Slide titles must be punchy and under 80 characters.
-- content must be a single takeaway sentence under 180 characters.
+- Slide titles must stay under 80 characters.
+- content is a supporting paragraph with facts from the source, under 500 characters, not a slogan.
+- Except cover and quote, content must be at least two sentences and about 180 characters; do not leave the paragraph half empty.
+- Every content slide except cover and quote must have 2-4 blocks.
 - Each block heading must be under 55 characters.
-- Each block body must be under 120 characters.
-- Before returning JSON, self-check every string: count characters, and rewrite anything that exceeds its budget.
+- Each block body should be at least one sentence with a number, name, or condition from the source when one exists, and stay under 350 characters.
+- Use the available space. Short slogans are a defect; missing a source fact is worse than going slightly long.
+- Ground content and blocks in facts, names, and numbers from the source.
+- Do not write slogan-only slides.
 - Never repeat the same sentence across title, content, and block body.
 """.strip()
 
@@ -240,18 +247,18 @@ def _build_quality_checklist(language: str) -> str:
 Checklist trước khi trả kết quả:
 1. Slide 1 có role "cover", không có blocks.
 2. Các slide còn lại có role phù hợp và không trùng lặp liên tiếp.
-3. Mỗi slide có một insight rõ ràng, không chỉ tóm tắt ý.
-4. Các block heading là micro-headline, không phải từ khóa khô khan.
-5. Tất cả chuỗi đều nằm trong ngân sách ký tự.
+3. Mỗi slide nội dung mang fact từ nguồn, không chỉ slogan, và đã dùng hết chỗ trống.
+4. Trừ cover và quote, mỗi slide có 2-4 blocks cụ thể.
+5. Title ngắn; content và block body đủ 2 câu / 1 câu có fact, không nửa vời.
 6. Câu chuyện có mạch lạc: problem -> solution -> proof -> action.
 """.strip()
     return """
 Pre-output quality checklist:
 1. Slide 1 has role "cover" and no blocks.
 2. Remaining slides have distinct, appropriate roles.
-3. Every slide delivers one clear insight, not just a summary bullet.
-4. Block headings are micro-headlines, not dry keywords.
-5. All strings fit their character budgets.
+3. Every content slide carries source facts, not slogan-only copy, and uses the available space.
+4. Except cover and quote, every slide has 2-4 specific blocks.
+5. Titles stay short; content has at least two sentences and each block body has a source fact.
 6. The deck flows: problem -> solution -> proof -> action.
 """.strip()
 

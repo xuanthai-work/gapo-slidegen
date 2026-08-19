@@ -37,6 +37,9 @@ exports/
 .data/
 storage/
 
+# Local future-task notes (not product direction)
+futask/
+
 # Test output
 test-results/
 playwright-report/

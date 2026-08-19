@@ -1,6 +1,7 @@
 # M1 generation pipeline boundary
 
-Status: local end-to-end foundation implemented; gateway adapter pending
+Status: implemented. Company gateway is the live LLM adapter; Gemini is
+disabled. Operational detail lives in `docs/generation-pipeline-architecture.md`.
 
 ## Flow
 
@@ -15,14 +16,11 @@ Status: local end-to-end foundation implemented; gateway adapter pending
 7. Editor changes are debounced and saved through an optimistic-revision PATCH.
 
 The dashboard uses one-click generation from a new source and opens the editable
-presentation when the background job completes. The provider creates a bounded
-internal story plan, but there is no user-facing outline review step. Each slide
-in that plan contains a semantic layout id, a slide-level takeaway, and finished
-copy blocks with deliberate headings and bodies. The template adapter maps those
-blocks directly to named Presenton slots; it does not split AI prose to invent
-card headings. Legacy title/content-only outlines retain a deterministic fallback.
-Existing outline records and endpoints remain temporarily for database
-compatibility and are not called by the web product.
+presentation when the background job completes. The worker runs staged
+understanding, outline, deck/slide planning, layout selection, copy writing,
+compile, and rule-based validate/repair. There is no user-facing outline review
+in the default web flow. Existing outline records and endpoints remain for
+database compatibility and are not called by the web product.
 
 All job and presentation reads filter by the authenticated owner. The maximum
 slide count remains 30 at both the API and canonical schema boundaries. New
@@ -32,57 +30,34 @@ The offline stub uses a bounded word-count heuristic for Auto mode.
 
 Generation jobs also snapshot a validated theme id. Modern Blue is the default
 and is compiled from the pinned Presenton Modern template artifact;
-Editorial Cobalt, Warm Studio, and Midnight Signal remain compatibility
-fallbacks for existing decks.
-Modern Blue cycles through six upstream content layouts compatible with the
-current text-only story plan. Its nested Presenton component tree is flattened
-to editable canonical text and shape objects while retaining component/slot
-metadata. Chart and table layouts remain excluded from automatic selection
-until the story plan provides structured data. The three compatibility themes
-continue to use their six product-owned native layout archetypes.
+Editorial Cobalt, Warm Studio, and Midnight Signal use product-owned native
+layouts. Chart and table layouts remain excluded from automatic selection.
 
 ## Provider boundary
 
 `PresentationProvider` receives normalized source text, sections, language,
-an optional requested slide count, title, and a preallocated presentation id. It returns canonical
-presentation JSON and has no dependency on FastAPI, PostgreSQL, or the editor.
-The same provider boundary exposes outline generation; the local stub keeps
-both phases deterministic and offline until the gateway contract is available.
+an optional requested slide count, title, and a preallocated presentation id.
+The worker actually runs `GenerationPipeline` (`apps/api/app/generation/stages/`),
+which composes story planning, layout selection, copy writing, and compile.
+The same planner boundary exposes outline generation and scoped rewrite.
 
-The default provider is `stub`. It deterministically creates native text and
-shape elements and sends no data outside the machine. It exists to test the
-queue, persistence, polling, and editor-loading path; it is not presented as AI
-generation quality.
+Configured providers:
 
-`google-ai-studio` is an optional temporary external provider. It uses Google's
-official Gen AI SDK and a nested Pydantic response schema to create structured
-story-plan items. The normal web flow lets Gemini choose the number of items;
-legacy internal outline calls may still request an exact count. The key and model id are backend-only
-environment settings. Source text is bounded before transmission, and uploaded
-assets are not included. Internal plan-to-slide rendering remains local and
-deterministic, so the editable document never depends on model-generated
-geometry. Provider errors are bounded and the configured key is redacted.
+- `stub` — deterministic offline placeholder. Safe default in `.env.example`.
+- `company-gateway` — OpenAI-compatible chat completions. This is the live
+  generation path. JSON stages paste schema into the prompt (no native
+  `response_format`); copy stream uses a tagged grammar. Requests set
+  `max_tokens` to 8192.
 
-The same provider boundary supports scoped text rewriting. An authenticated
-editor request sends either the selected text or all text blocks on the current
-slide, plus the user instruction and language, to the backend provider. A
-whole-slide response must contain exactly the original block ids; the client
-keeps geometry and styles local and applies the rewrite as one canonical
-`replace-slide` operation, preserving one-step undo/redo and autosave behavior.
-The provider never receives the full presentation document for this operation.
+`google-ai-studio` is **not** constructed by `factory.py`. The Gemini module
+remains in the tree as commented legacy. Re-enable only by changing the factory.
 
-Image generation uses a separate `ImageGenerationProvider` and model setting.
-An authenticated request contains only a bounded prompt and aspect ratio. The
-adapter returns bytes to the API, which independently validates size and image
-magic bytes before persisting an owner-scoped asset. The editor can insert the
-asset or replace a selected image through a normal canonical operation, so
-autosave and undo/redo remain intact and the provider never receives slide
-content, geometry, or existing assets. The default image provider is disabled;
-uploaded images and all non-image-generation flows continue to work offline.
+The same planner supports scoped text rewriting from the editor. A whole-slide
+response must contain exactly the original block ids; geometry stays local.
 
-The company gateway adapter will be implemented after its request format,
-structured-output behavior, model list, authentication method, and error
-contract are known. A second provider can implement the same protocol later.
+Text-to-image generation is disabled at the API (`build_image_provider` raises)
+and in the worker (`NullAssetPlanner` / `NullAssetGenerator`). Uploaded images
+and non-image flows continue to work.
 
 ## Worker behavior
 
@@ -140,5 +115,6 @@ After PostgreSQL is running and migrated, run the worker separately:
 npm run worker:dev
 ```
 
-`SLIDEGEN_GENERATION_PROVIDER=stub` is the safe local default until the gateway
-adapter is configured.
+`SLIDEGEN_GENERATION_PROVIDER=stub` is the safe local default until the company
+gateway is configured. After changing provider settings, restart **both** the
+API process and `npm run worker:dev`.

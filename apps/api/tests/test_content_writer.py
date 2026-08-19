@@ -1,5 +1,6 @@
 from uuid import uuid4
 
+from app.generation.content_schema import build_content_writer_prompt
 from app.generation.layouts import ContentConstraints
 from app.generation.models import SlideContent
 from app.generation.provider import GenerationRequest, ProviderResponseError
@@ -163,3 +164,75 @@ def test_provider_content_writer_falls_back_to_reviewed_copy() -> None:
 
     assert contents["detail"].title == "Reviewed title"
     assert contents["detail"].slots["body"] == "Reviewed body"
+
+
+def test_content_writer_prompt_grounds_copy_in_source_excerpt() -> None:
+    outline, deck = _batch_context()
+    source = "The Hai Phong plant produced 12,000 tons in 2023 and employs 480 people."
+
+    prompt = build_content_writer_prompt(
+        outline=outline,
+        deck_plan=deck,
+        constraints={"detail": ContentConstraints(80, 180, 55, 120, 1)},
+        language="en",
+        source_text=source,
+    )
+
+    assert "12,000 tons" in prompt
+    assert "480 people" in prompt
+    assert "reviewed_copy is the slide structure" in prompt
+    assert "do not invent numbers" in prompt.lower() or "Do not invent" in prompt
+    assert "title_max_chars" not in prompt
+    assert "content_max_chars" not in prompt
+    assert "Follow each slide's character and item constraints strictly" not in prompt
+    assert "2-3 sentences" in prompt
+
+
+def test_truncate_content_text_cuts_at_sentence_boundary() -> None:
+    from app.generation.copy_text import truncate_content_text
+
+    text = (
+        "The Hai Phong plant produced 12,000 tons in 2023. "
+        "It employs 480 people across two shifts."
+    )
+
+    truncated = truncate_content_text(text, 70)
+
+    assert truncated == "The Hai Phong plant produced 12,000 tons in 2023."
+    assert "480 people" not in truncated
+    assert "..." not in truncated
+
+
+class RecordingBatchProvider:
+    def __init__(self) -> None:
+        self.kwargs: dict[str, object] | None = None
+
+    def write_content_batch(self, **kwargs):
+        self.kwargs = kwargs
+        outline = kwargs["outline"]
+        return {
+            item.id: SlideContent(
+                slide_id=item.id,
+                layout_id=item.layout_id or "",
+                title=item.title,
+                slots={"body": item.content, "items": item.blocks},
+            )
+            for item in outline.items
+        }
+
+
+def test_provider_content_writer_forwards_source_text_to_provider() -> None:
+    outline, deck = _batch_context()
+    provider = RecordingBatchProvider()
+    writer = ProviderContentWriter(provider, fallback=OutlineContentWriter())
+
+    writer.write_batch(
+        outline=outline,
+        deck_plan=deck,
+        constraints={"detail": ContentConstraints(80, 180, 55, 120, 1)},
+        language="en",
+        source_text="Keep the 12,000-ton figure.",
+    )
+
+    assert provider.kwargs is not None
+    assert provider.kwargs["source_text"] == "Keep the 12,000-ton figure."

@@ -133,8 +133,9 @@ class FakeContentWriter:
         deck_plan,
         constraints: dict[str, ContentConstraints],
         language: str,
+        source_text: str = "",
     ) -> dict[str, SlideContent]:
-        del language
+        del language, source_text
         self.batch_calls += 1
         plans = {plan.id: plan for plan in deck_plan.slides}
         return {

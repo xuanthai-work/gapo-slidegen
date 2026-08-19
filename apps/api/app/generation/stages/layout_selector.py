@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Mapping
 
-from ..layouts import ContentConstraints
+from ..layouts import ContentConstraints, NativeLayoutRegistry, build_native_layout_registry
 from ..models import SlidePlan
 from ..presenton_template import (
     MODERN_CONTENT_LAYOUT_IDS,
@@ -14,6 +14,12 @@ from ..presenton_template import (
     _layout_shape,
 )
 from .models import StoryOutlineItem
+
+_NATIVE_CONTENT_ORDER = {
+    "editorial-cobalt": ("header", "split", "statement", "margin", "band", "frame"),
+    "warm-studio": ("margin", "frame", "header", "statement", "split", "band"),
+    "midnight-signal": ("split", "band", "margin", "frame", "statement", "header"),
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -227,3 +233,94 @@ class PresentonLayoutSelector:
         slide_index: int,
     ) -> bool:
         return any(index == slide_index for index, _ in assets)
+
+
+class NativeLayoutSelector:
+    """Selects product-owned native layouts and exposes their content budgets."""
+
+    name = "native"
+
+    def __init__(self, registry: NativeLayoutRegistry | None = None) -> None:
+        self.registry = registry or build_native_layout_registry()
+
+    def select(
+        self,
+        item: StoryOutlineItem,
+        *,
+        index: int,
+        theme_id: str,
+        assets: Mapping[tuple[int, str], str] | None = None,
+        plan: SlidePlan | None = None,
+    ) -> str:
+        del assets
+        role = plan.role if plan else item.role
+        block_count = max(
+            len(item.blocks),
+            plan.item_count if plan is not None else 0,
+        )
+        if index == 0 or role == "cover":
+            return self._cover_layout_id(theme_id)
+        if role in {"big-stat", "quote"}:
+            return "content-statement"
+        if role in {"cta"}:
+            return "content-band"
+        if block_count >= 2:
+            return "content-header"
+        body = item.content
+        if len(body) > 720:
+            return "content-header"
+        order = _NATIVE_CONTENT_ORDER.get(theme_id, _NATIVE_CONTENT_ORDER["editorial-cobalt"])
+        return f"content-{order[(index - 1) % len(order)]}"
+
+    def content_constraints(self, layout_id: str) -> ContentConstraints:
+        return self.registry.content_constraints(layout_id)
+
+    @staticmethod
+    def _cover_layout_id(theme_id: str) -> str:
+        if theme_id == "warm-studio":
+            return "cover-warm"
+        if theme_id == "midnight-signal":
+            return "cover-midnight"
+        return "cover-editorial"
+
+
+class ThemeDispatchLayoutSelector:
+    """Chooses Presenton layouts for Modern Blue and native layouts otherwise."""
+
+    name = "dispatch"
+
+    def __init__(
+        self,
+        *,
+        presenton: PresentonLayoutSelector | None = None,
+        native: NativeLayoutSelector | None = None,
+    ) -> None:
+        self._presenton = presenton or PresentonLayoutSelector()
+        self._native = native or NativeLayoutSelector()
+
+    def select(
+        self,
+        item: StoryOutlineItem,
+        *,
+        index: int,
+        theme_id: str,
+        assets: Mapping[tuple[int, str], str] | None = None,
+        plan: SlidePlan | None = None,
+    ) -> str:
+        return self._delegate(theme_id).select(
+            item,
+            index=index,
+            theme_id=theme_id,
+            assets=assets,
+            plan=plan,
+        )
+
+    def content_constraints(self, layout_id: str) -> ContentConstraints:
+        if layout_id in self._native.registry.layout_ids:
+            return self._native.content_constraints(layout_id)
+        return self._presenton.content_constraints(layout_id)
+
+    def _delegate(self, theme_id: str) -> PresentonLayoutSelector | NativeLayoutSelector:
+        if theme_id == "modern-blue":
+            return self._presenton
+        return self._native

@@ -7,12 +7,12 @@ produce focused, audience-aware slide copy.
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import httpx
 from pydantic import BaseModel, Field, ValidationError
 
+from ..llm_schema import llm_json_schema
 from ..provider import ProviderResponseError
 from .models import ContentUnderstandingResult
 from .protocols import ContentUnderstanding
@@ -131,7 +131,7 @@ class CompanyGatewayContentUnderstanding:
         language: str,
         source_kind: str,
     ) -> ContentUnderstandingResult | None:
-        schema = json.dumps(_UnderstandingResponse.model_json_schema(), ensure_ascii=False)
+        schema = llm_json_schema(_UnderstandingResponse)
         system, user = self._build_prompt(
             title=title,
             text=text,

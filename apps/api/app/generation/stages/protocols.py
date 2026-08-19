@@ -104,6 +104,7 @@ class ContentWriter(Protocol):
         deck_plan: DeckPlan,
         constraints: dict[str, ContentConstraints],
         language: str,
+        source_text: str = "",
     ) -> dict[str, SlideContent]:
         ...
 

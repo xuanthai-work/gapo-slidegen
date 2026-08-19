@@ -9,6 +9,7 @@ from ..layouts import (
 from ..models import SlideContent
 from ..provider import GenerationRequest
 from ..themes import get_theme
+from .layout_selector import NativeLayoutSelector
 from .models import StoryOutline, StoryOutlineItem
 
 
@@ -35,6 +36,7 @@ class NativeContentGenerator:
 
     def __init__(self, registry: NativeLayoutRegistry | None = None) -> None:
         self.registry = registry or build_native_layout_registry()
+        self._layout_selector = NativeLayoutSelector()
 
     def _render_theme(
         self,
@@ -49,37 +51,16 @@ class NativeContentGenerator:
         typography = {key: str(value) for key, value in fonts.items()}
         return theme, palette, typography
 
-    @staticmethod
-    def _cover_layout_id(theme_id: str) -> str:
-        if theme_id == "warm-studio":
-            return "cover-warm"
-        if theme_id == "midnight-signal":
-            return "cover-midnight"
-        return "cover-editorial"
-
-    @staticmethod
-    def _content_layout_id(
+    def _resolve_layout_id(
+        self,
+        item: StoryOutlineItem,
         *,
         index: int,
         theme_id: str,
-        role: str | None,
-        body: str,
     ) -> str:
-        orders = {
-            "editorial-cobalt": ("header", "split", "statement", "margin", "band", "frame"),
-            "warm-studio": ("margin", "frame", "header", "statement", "split", "band"),
-            "midnight-signal": ("split", "band", "margin", "frame", "statement", "header"),
-        }
-        if role in {"big-stat", "quote"}:
-            variant = "statement"
-        elif role in {"cover", "cta"}:
-            variant = "band"
-        elif len(body) > 720:
-            variant = "header"
-        else:
-            order = orders.get(theme_id, orders["editorial-cobalt"])
-            variant = order[(index - 1) % len(order)]
-        return f"content-{variant}"
+        if item.layout_id:
+            return item.layout_id
+        return self._layout_selector.select(item, index=index, theme_id=theme_id)
 
     def render_slide(
         self,
@@ -101,35 +82,20 @@ class NativeContentGenerator:
         else:
             item = items[index]
             written = contents.get(item.id) if contents else None
-        if index == 0:
-            return self.registry.compile(
-                self._cover_layout_id(theme_id),
-                NativeLayoutContext(
-                    title=written.title if written else item.title,
-                    body=str(written.slots.get("body") or "") if written else item.content,
-                    theme_id=theme_id,
-                    colors=palette,
-                    fonts=typography,
-                    total=max(len(items), 1),
-                ),
-            )
         slots = written.slots if written else {}
         slot_items = slots.get("items")
         return self.registry.compile(
-            self._content_layout_id(
-                index=index,
-                theme_id=theme_id,
-                role=item.role,
-                body=item.content,
-            ),
+            self._resolve_layout_id(item, index=index, theme_id=theme_id),
             NativeLayoutContext(
-                title=written.title if written else item.title or f"Key point {index}",
+                title=written.title if written else item.title or (
+                    request.title if index == 0 else f"Key point {index}"
+                ),
                 body=str(slots.get("body") or "") if written else item.content,
                 theme_id=theme_id,
                 colors=palette,
                 fonts=typography,
                 index=index,
-                total=len(items),
+                total=max(len(items), 1),
                 blocks=(
                     [dict(block) for block in slot_items if isinstance(block, dict)]
                     if isinstance(slot_items, list)

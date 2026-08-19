@@ -11,13 +11,14 @@ polished slide decks — entirely on your own infrastructure.
 ### AI-Powered Generation
 - **One-click generation** — enter a prompt or upload a document and receive a
   complete presentation with a structured story plan.
-- **Smart content layouts** — the AI selects a narrative-appropriate slide count
-  (typically 5–15) and rotates through multiple layout archetypes.
+- **Staged pipeline** — content understanding, outline, deck/slide planning,
+  layout selection, copy writing, compile, then rule-based validate/repair.
+  See [docs/generation-pipeline-architecture.md](docs/generation-pipeline-architecture.md).
 - **AI rewrite** — refine a selected text element or rewrite every text block on
   a slide from a single instruction, preserving layout and styles.
-- **AI image generation** — generate a 16:9 image from a prompt and place it
-  directly on a slide, or let the pipeline auto-place images for
-  `split-image` layouts when an image provider is configured.
+
+Text-to-image generation is **disabled**. Uploaded images still work in the
+editor. Pipeline asset planning is a no-op.
 
 ### Rich Slide Editor
 - Add, remove, reorder, and duplicate slides.
@@ -32,8 +33,9 @@ polished slide decks — entirely on your own infrastructure.
 - Normalized content is stored per-user with automatic retention cleanup.
 
 ### Themes & Export
-- Four native-editable visual themes: **Modern Blue**, **Editorial Cobalt**,
-  **Warm Studio**, and **Midnight Signal**.
+- Four visual themes: **Modern Blue** (Presenton template compile), plus
+  **Editorial Cobalt**, **Warm Studio**, and **Midnight Signal** (native
+  layouts).
 - Export to **native PPTX** with editable text, shapes, tables, charts, and
   embedded images.
 
@@ -59,6 +61,7 @@ gapo-slidegen/
 │   ├── slide-editor/     Product-owned editor boundary
 │   └── pptx-exporter/    Schema-to-native OOXML export adapter
 ├── docs/
+│   ├── generation-pipeline-architecture.md
 │   ├── decisions/        Architecture & dependency decision records
 │   └── provenance/       Source, license, and modification records
 ├── LICENSES/             Third-party license texts
@@ -131,26 +134,20 @@ to `.env` and adjust as needed.
 
 ### AI Providers
 
-Generation uses a **provider** abstraction. Choose one:
+Generation uses a **provider** abstraction. `factory.py` constructs one of:
 
 | Provider | Variable Value | External API | Description |
 |---|---|---|---|
 | `stub` | `SLIDEGEN_GENERATION_PROVIDER=stub` | None | Deterministic offline placeholder. No data leaves the machine. |
-| `google-ai-studio` | `SLIDEGEN_GENERATION_PROVIDER=google-ai-studio` | Google Gemini | Uses the Gemini Developer API for structured story plans. |
-| `company-gateway` | `SLIDEGEN_GENERATION_PROVIDER=company-gateway` | Self-hosted | OpenAI-compatible gateway for internal or self-hosted LLMs. |
+| `company-gateway` | `SLIDEGEN_GENERATION_PROVIDER=company-gateway` | Self-hosted | OpenAI-compatible gateway for internal LLMs. |
+
+`google-ai-studio` is **not** an active factory option. The Gemini module is
+kept as commented legacy only.
 
 #### Stub (default — no setup required)
 
 The stub provider validates the full pipeline without external calls. Useful for
 development, testing, and environments without GPU or API access.
-
-#### Google AI Studio
-
-```dotenv
-SLIDEGEN_GENERATION_PROVIDER=google-ai-studio
-SLIDEGEN_GOOGLE_API_KEY=your-api-key
-SLIDEGEN_GOOGLE_MODEL=gemini-2.5-pro
-```
 
 #### Company Gateway (OpenAI-compatible)
 
@@ -165,17 +162,17 @@ SLIDEGEN_COMPANY_GATEWAY_MODEL=your-model-id
 > (e.g. `http://127.0.0.1:5000`). The chat completions path
 > (`/v1/chat/completions`) is appended automatically.
 
-#### Image Generation (optional)
+Set `SLIDEGEN_GENERATION_STREAMING_ENABLED=true` (and optionally Redis) only
+when you want tagged-stream copy into the editor. The default is batch JSON
+copy.
 
-Image generation is configured separately and is disabled by default:
+#### Image generation
 
-```dotenv
-SLIDEGEN_IMAGE_PROVIDER=google-ai-studio
-SLIDEGEN_GOOGLE_IMAGE_MODEL=your-image-model-id
-```
+Text-to-image is disabled in the API and the worker. Leave
+`SLIDEGEN_IMAGE_PROVIDER=disabled`.
 
 > **Note:** Restart both the API server and the generation worker after changing
-> any provider settings.
+> any provider settings. The worker process does not hot-reload Python.
 
 ### Environment Variable Reference
 
@@ -188,8 +185,10 @@ SLIDEGEN_GOOGLE_IMAGE_MODEL=your-image-model-id
 | `SLIDEGEN_GENERATION_CONCURRENCY` | `2` | Concurrent generation jobs |
 | `SLIDEGEN_SESSION_TTL_HOURS` | `168` (7 days) | Authentication session lifetime |
 | `SLIDEGEN_SOURCE_RETENTION_HOURS` | `24` | Hours before expired sources are cleaned |
-| `SLIDEGEN_GENERATION_PROVIDER` | `stub` | AI text generation provider |
-| `SLIDEGEN_IMAGE_PROVIDER` | `disabled` | AI image generation provider |
+| `SLIDEGEN_GENERATION_PROVIDER` | `stub` | AI text generation provider (`stub` or `company-gateway`) |
+| `SLIDEGEN_IMAGE_PROVIDER` | `disabled` | Must stay disabled; text-to-image is off |
+| `SLIDEGEN_GENERATION_STREAMING_ENABLED` | `false` | Tagged-stream copy + optional Redis pub/sub |
+| `SLIDEGEN_GOOGLE_MAX_INPUT_CHARS` | `120000` | Source-text input cap for LLM prompts |
 
 ---
 
@@ -199,15 +198,12 @@ Gapo SlideGen is designed with data privacy as a core principle:
 
 - **Stub provider** — all processing stays on the local machine. No data is
   transmitted externally.
-- **Google AI Studio** — only normalized source text (bounded to
-  `SLIDEGEN_GOOGLE_MAX_INPUT_CHARS`), the requested language, and title are sent.
-  Uploaded images, presentation geometry, styles, and the final document are
-  **never** sent to Google.
+- **Company gateway** — only bounded source text, title, language, and the
+  prompts/schemas for the current stage are sent to the configured gateway.
+  Presentation geometry and uploaded binaries are not sent for generation.
 - **AI rewrite** — only the selected text (or current slide text blocks), the
   instruction, and the language are transmitted. The full presentation is not
   sent.
-- **Image generation** — only the prompt and aspect ratio are sent. No slide
-  content, existing images, or presentation data is included.
 - **PPTX export** — processed entirely on the local server. No external service
   is involved.
 

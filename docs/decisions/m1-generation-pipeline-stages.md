@@ -1,6 +1,7 @@
 # M1 generation pipeline stages
 
-Status: accepted and implemented
+Status: accepted and implemented. See `docs/generation-pipeline-architecture.md`
+for the running worker path (call counts, copy policy, layout inventory).
 
 ## Context
 
@@ -66,8 +67,9 @@ audience, key takeaways, tone, and any explicit constraints. This stage may be
 implemented by a small LLM call or by deterministic heuristics; it is an
 internal preparation step for outline generation.
 
-Output shape (future): `ContentUnderstanding` carrying metadata only — no
-finished copy.
+Output shape: `ContentUnderstandingResult` (`intent`, `audience`, `tone`,
+`key_takeaways`). Live path: `CompanyGatewayContentUnderstanding`. Stub returns
+`None` and the outline still runs.
 
 ### 4. Story / Outline
 
@@ -82,18 +84,19 @@ Current output shape: list of outline items validated by
 
 ### 5. Slide planning
 
-Map each outline item to a concrete slide purpose and decide what kinds of
-elements it will carry (title, body, list, metrics, image, chart, table). This is
-a local decision layer; it does not yet assign coordinates.
+Map each outline item to a concrete slide purpose and communication structure
+(density, item count, visual priority). Coordinates are still not assigned here.
+
+Current implementation: `ProviderSlidePlanner` wrapping `plan_slide`, with
+`OutlineSlidePlanner` as fallback.
 
 ### 6. Layout selection
 
-Choose the final layout implementation for each slide purpose. For Modern Blue
-this maps to `PresentonTemplateAdapter` layout ids; for compatibility themes it
-maps to product-owned native archetypes.
+Choose the final layout implementation for each slide purpose. Modern Blue maps
+to Presenton template ids; other themes map to native archetypes in
+`apps/api/app/generation/layouts/native.py`.
 
-Current mapping: `STORY_LAYOUT_IDS` → template ids
-(`apps/api/app/generation/presenton_template.py`).
+Current implementation: `ThemeDispatchLayoutSelector`.
 
 ### 7. Content generation
 
@@ -110,9 +113,10 @@ Decide which slides need generated or imported assets (images, charts, tables,
 SVG diagrams) and produce an asset request list per slide. This stage must run
 after layout selection so it knows which slots can accept assets.
 
-Current implementation: `StubAssetPlanner` in
-`apps/api/app/generation/stages/asset_planner.py`. It currently assigns a hero
-image to `split-image` slides only.
+Current implementation: `NullAssetPlanner` in
+`apps/api/app/generation/stages/orchestrator.py`. Image slots stay empty.
+`VisualIntentAssetPlanner` / `StubAssetPlanner` remain in the tree but are not
+wired by `factory.py`.
 
 ### 9. Asset generation (optional, batched)
 
@@ -121,10 +125,9 @@ Execute the asset request list. Image generation uses
 Each produced asset is stored as an immutable, owner-scoped `AssetRecord` and
 referenced by `assetId`.
 
-Current implementation: `ImageAssetGenerator` in
-`apps/api/app/generation/stages/asset_generator.py`; executed by the worker
-when an image provider is configured. Failures are logged per asset and do not
-fail the whole deck.
+Current implementation: `NullAssetGenerator` in the worker factory.
+`ImageAssetGenerator` exists but is unused. Text-to-image HTTP routes return
+disabled.
 
 ### 10. Slide schema
 
@@ -149,37 +152,38 @@ Current implementations: web editor canvas, present mode, and
 |---|---|---|
 | User Prompt / Document | `apps/web/src/app/dashboard.tsx` | One-click flow today. |
 | Document normalization | `apps/api/app/ingestion.py` + `extract_document()` | Returns `SourceDocument`. |
-| Content understanding | Implicit inside `generate_outline()` prompts | Not a separate struct yet. |
-| Story / Outline | `apps/api/app/generation/outlines.py` + `/v1/outlines` endpoints | Persisted but not exposed in product flow. |
-| Slide planning | Implicit in outline item fields | Could be extracted. |
-| Layout selection | `STORY_LAYOUT_IDS` → template ids | `apps/api/app/generation/presenton_template.py` |
-| Content generation | `apps/api/app/generation/stages/content_generator.py` | `PresentonContentGenerator` and `NativeContentGenerator`. |
-| Asset planning | `apps/api/app/generation/stages/asset_planner.py` | `StubAssetPlanner`; currently only `split-image` slides. |
-| Asset generation | `apps/api/app/generation/stages/asset_generator.py` | `ImageAssetGenerator` with bounded thread-pool concurrency. |
-| Slide schema | `packages/slide-schema/src/schema.ts` + `GenerationPipeline.render()` | Zod-validated canonical JSON assembled by ContentGenerator. |
-| Renderer / Export | `packages/pptx-exporter/src/index.ts` + web canvas | Read-only rendering. |
+| Content understanding | `apps/api/app/generation/stages/content_understanding.py` | One LLM call when the planner has `_chat`. |
+| Story / Outline | `CompanyGatewayProvider.generate_outline` + `outline_schema.py` | Persisted outline records exist; web does not review them. |
+| Deck planning | `ProviderDeckPlanner` / `plan_deck` | Narrative arc + per-slide role/goal. |
+| Slide planning | `ProviderSlidePlanner` / `plan_slide` | One LLM call per slide: density, structure, archetype. |
+| Layout selection | `ThemeDispatchLayoutSelector` | Presenton vs native by `theme_id`. No LLM. |
+| Content writing | `ProviderContentWriter` or `stream_deck_content` | One batch JSON call or one tagged stream. |
+| Content generation | `ThemeDispatchContentGenerator` | Compiles layout geometry. |
+| Asset planning | `NullAssetPlanner` | No-op. |
+| Asset generation | `NullAssetGenerator` | No-op. |
+| Validate / repair | `RuleBasedSlideValidator` + `DeterministicSlideRepairer` | Bounds, overlap, min font — not visual quality. |
+| Slide schema | `packages/slide-schema` + `GenerationPipeline.render()` | Canonical JSON. |
+| Renderer / Export | web canvas, present mode, `packages/pptx-exporter` | Read-only rendering. |
 
 ## Consequences
 
-- Each stage gains one clear responsibility, making it easier to swap providers,
-  add tests, or retry a single stage.
-- The outline record becomes a real checkpoint rather than a compatibility
-  holdover.
-- Asset planning is explicitly recognized as a missing boundary; it should be
-  added before enabling automatic images, charts, or tables in generated decks.
-- The default web flow can still skip user-facing outline review; the dashboard
-  calls `/v1/generations` with `source_id` and lets the worker run all stages.
-- A future "advanced" flow can stop at `Story / Outline` for user review, then
-  continue from `/v1/generations` with `outline_id`.
+- Each stage has one responsibility, so providers and tests can swap a stage
+  without rewriting the worker.
+- The outline record can still become a user-facing checkpoint later; the
+  default web flow skips that review.
+- Asset planning/generation exist as code but are unwired (`Null*` in factory).
+  Re-enabling images is a product choice, not an unfinished checklist item.
 
-## Future work
+## Open questions
 
-1. Define `ContentUnderstanding` as an explicit internal data structure and
-   optional provider call.
-2. Extend `StubAssetPlanner` to assign images/charts/tables to additional layouts
-   (profile cards, alternating cards, highlight metrics, etc.).
-3. Add chart/table/SVG asset generation alongside image generation.
-4. Extend `STORY_LAYOUT_IDS` and the template adapter to accept chart and table
-   data payloads.
-5. Add an optional advanced flow in the dashboard that exposes the outline
-   review step.
+These are not a committed roadmap. Current progress is not necessarily the
+right long-term direction.
+
+- Layout inventory is small (Presenton templates + nine native layouts). Visual
+  sameness is more likely a geometry problem than a missing LLM stage.
+- Deck/slide plan already carries `density` and `preferred_archetype`; the
+  selector has few layouts to honor them.
+- Asset planning/generation code exists but is unwired.
+- Rule-based validation does not score visual quality. A VLM critic would need
+  screenshots, a vision model, and alternative layouts to repair into.
+- An optional dashboard outline-review flow remains unbuilt.

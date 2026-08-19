@@ -29,7 +29,7 @@ from .content_understanding import (
 )
 from .content_writer import OutlineContentWriter, ProviderContentWriter
 from .deck_planner import OutlineDeckPlanner, ProviderDeckPlanner
-from .layout_selector import PresentonLayoutSelector
+from .layout_selector import NativeLayoutSelector, PresentonLayoutSelector, ThemeDispatchLayoutSelector
 from .orchestrator import GenerationPipeline, SlideValidationFailed
 from .protocols import (
     AssetGenerator,
@@ -73,6 +73,7 @@ __all__ = [
     "NullAssetGenerator",
     "LayoutSelector",
     "NativeContentGenerator",
+    "NativeLayoutSelector",
     "OutlineContentWriter",
     "OutlineDeckPlanner",
     "OutlineSlidePlanner",
@@ -92,6 +93,7 @@ __all__ = [
     "RuleBasedSlideValidator",
     "StubAssetPlanner",
     "ThemeDispatchContentGenerator",
+    "ThemeDispatchLayoutSelector",
     "StoryOutlineItem",
     "StoryPlanner",
     "VisualIntentAssetPlanner",

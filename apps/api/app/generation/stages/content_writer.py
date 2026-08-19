@@ -1,5 +1,6 @@
 from typing import Protocol
 
+from ..copy_text import truncate_content_text
 from ..layouts import ContentConstraints
 from ..models import DeckPlan, SlideContent, SlidePlan
 from ..provider import ProviderError, ProviderResponseError
@@ -14,21 +15,9 @@ class BatchContentWritingProvider(Protocol):
         deck_plan: DeckPlan,
         constraints: dict[str, ContentConstraints],
         language: str,
+        source_text: str = "",
     ) -> dict[str, SlideContent]:
         ...
-
-
-def _truncate(text: str, limit: int) -> str:
-    cleaned = " ".join(text.split())
-    if len(cleaned) <= limit:
-        return cleaned
-    suffix = "..." if limit >= 3 else ""
-    available = limit - len(suffix)
-    truncated = cleaned[:available]
-    last_space = truncated.rfind(" ")
-    if last_space > available * 0.7:
-        truncated = truncated[:last_space]
-    return truncated.rstrip(" .,;:-") + suffix
 
 
 class OutlineContentWriter:
@@ -43,8 +32,9 @@ class OutlineContentWriter:
         deck_plan: DeckPlan,
         constraints: dict[str, ContentConstraints],
         language: str,
+        source_text: str = "",
     ) -> dict[str, SlideContent]:
-        del language
+        del language, source_text
         plans = {plan.id: plan for plan in deck_plan.slides}
         return {
             item.id: self.write(
@@ -72,19 +62,19 @@ class OutlineContentWriter:
 
         items = [
             {
-                "heading": _truncate(
+                "heading": truncate_content_text(
                     str(block.get("heading") or ""),
                     limits["block_heading_max_chars"],
                 ),
-                "body": _truncate(
+                "body": truncate_content_text(
                     str(block.get("body") or ""),
                     limits["block_body_max_chars"],
                 ),
-                "label": _truncate(
+                "label": truncate_content_text(
                     str(block.get("label") or ""),
                     limits["block_heading_max_chars"],
                 ),
-                "value": _truncate(
+                "value": truncate_content_text(
                     str(block.get("value") or ""),
                     limits["block_body_max_chars"],
                 ),
@@ -94,9 +84,9 @@ class OutlineContentWriter:
         return SlideContent(
             slide_id=item.id,
             layout_id=layout_id,
-            title=_truncate(item.title, limits["title_max_chars"]),
+            title=truncate_content_text(item.title, limits["title_max_chars"]),
             slots={
-                "body": _truncate(item.content, limits["content_max_chars"]),
+                "body": truncate_content_text(item.content, limits["content_max_chars"]),
                 "items": items,
             },
         )
@@ -123,6 +113,7 @@ class ProviderContentWriter:
         deck_plan: DeckPlan,
         constraints: dict[str, ContentConstraints],
         language: str,
+        source_text: str = "",
     ) -> dict[str, SlideContent]:
         try:
             generated = self.provider.write_content_batch(
@@ -130,6 +121,7 @@ class ProviderContentWriter:
                 deck_plan=deck_plan,
                 constraints=constraints,
                 language=language,
+                source_text=source_text,
             )
             expected_ids = [item.id for item in outline.items]
             if list(generated) != expected_ids:
@@ -148,6 +140,7 @@ class ProviderContentWriter:
                 deck_plan=deck_plan,
                 constraints=constraints,
                 language=language,
+                source_text=source_text,
             )
 
     def _constrain_generated(

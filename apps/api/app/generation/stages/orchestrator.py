@@ -170,6 +170,7 @@ class GenerationPipeline:
         deck_plan: DeckPlan | None = None,
         *,
         language: str = "en",
+        source_text: str = "",
     ) -> dict[str, SlideContent]:
         if self.content_writer is None:
             return {}
@@ -190,6 +191,7 @@ class GenerationPipeline:
             deck_plan=deck_plan,
             constraints=constraints,
             language=language,
+            source_text=source_text,
         )
 
     def render(
@@ -269,6 +271,7 @@ class GenerationPipeline:
             outline,
             deck_plan,
             language=request.language,
+            source_text=request.text,
         )
         asset_plan = self.plan_assets(outline, request)
         generated = self.asset_generator.generate(asset_plan)

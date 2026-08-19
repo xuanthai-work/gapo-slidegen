@@ -260,47 +260,47 @@ def build_native_layout_registry() -> NativeLayoutRegistry:
     for definition in (
         NativeLayoutDefinition(
             "cover-editorial",
-            ContentConstraints(72, 130, 55, 120, 0),
+            ContentConstraints(72, 200, 55, 180, 0),
             _cover_editorial,
         ),
         NativeLayoutDefinition(
             "cover-midnight",
-            ContentConstraints(72, 130, 55, 120, 0),
+            ContentConstraints(72, 200, 55, 180, 0),
             _cover_midnight,
         ),
         NativeLayoutDefinition(
             "cover-warm",
-            ContentConstraints(72, 130, 55, 120, 0),
+            ContentConstraints(72, 200, 55, 180, 0),
             _cover_warm,
         ),
         NativeLayoutDefinition(
             "content-band",
-            ContentConstraints(80, 300, 55, 120, 0),
+            ContentConstraints(80, 300, 55, 180, 0),
             _content_band,
         ),
         NativeLayoutDefinition(
             "content-frame",
-            ContentConstraints(80, 320, 55, 120, 0),
+            ContentConstraints(80, 320, 55, 180, 0),
             _content_frame,
         ),
         NativeLayoutDefinition(
             "content-header",
-            ContentConstraints(80, 500, 55, 120, 3),
+            ContentConstraints(80, 500, 55, 220, 3),
             _content_header,
         ),
         NativeLayoutDefinition(
             "content-margin",
-            ContentConstraints(80, 360, 55, 120, 0),
+            ContentConstraints(80, 360, 55, 180, 0),
             _content_margin,
         ),
         NativeLayoutDefinition(
             "content-split",
-            ContentConstraints(72, 400, 55, 120, 0),
+            ContentConstraints(72, 400, 55, 180, 0),
             _content_split,
         ),
         NativeLayoutDefinition(
             "content-statement",
-            ContentConstraints(64, 220, 42, 72, 0),
+            ContentConstraints(64, 280, 55, 180, 0),
             _content_statement,
         ),
     ):

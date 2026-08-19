@@ -8,6 +8,7 @@ from typing import Any, Literal, Mapping
 from uuid import uuid4
 
 from .layouts.registry import ContentConstraints
+from .copy_text import truncate_content_text
 from .local_icon_registry import resolve_icon_for_context
 
 STAGE_WIDTH = 1280.0
@@ -106,26 +107,26 @@ ROLE_LAYOUT_CANDIDATES: dict[str, tuple[str, ...]] = {
 }
 
 ROLE_CONTENT_BUDGETS: dict[str, dict[str, int]] = {
-    "cover": {"title_max_chars": 72, "content_max_chars": 130},
-    "quote": {"content_max_chars": 220, "block_body_max_chars": 220},
-    "big-stat": {"block_heading_max_chars": 42, "block_body_max_chars": 72},
-    "cta": {"title_max_chars": 64, "content_max_chars": 150},
-    "summary": {"content_max_chars": 160, "block_body_max_chars": 100},
+    "cover": {"title_max_chars": 72, "content_max_chars": 200},
+    "quote": {"content_max_chars": 280, "block_body_max_chars": 280},
+    "big-stat": {"block_heading_max_chars": 60, "block_body_max_chars": 140},
+    "cta": {"title_max_chars": 64, "content_max_chars": 220},
+    "summary": {"content_max_chars": 240, "block_body_max_chars": 180},
 }
 
 PRESENTON_LAYOUT_CONSTRAINTS: dict[str, ContentConstraints] = {
-    "title_slide": ContentConstraints(72, 130, 55, 120, 0),
-    "title_description_bullet_points_grid_with_icon": ContentConstraints(72, 160, 42, 90, 4),
-    "title_description_bullet_points_list_with_icon": ContentConstraints(72, 180, 42, 100, 6),
-    "title_description_chart": ContentConstraints(72, 160, 42, 90, 4),
-    "title_description_chart_table": ContentConstraints(72, 150, 40, 80, 4),
-    "title_description_image": ContentConstraints(72, 180, 48, 110, 3),
-    "title_list_of_cards_with_alternating_image": ContentConstraints(72, 150, 42, 90, 4),
-    "title_list_of_cards_with_image": ContentConstraints(72, 150, 42, 90, 6),
+    "title_slide": ContentConstraints(72, 200, 55, 160, 0),
+    "title_description_bullet_points_grid_with_icon": ContentConstraints(72, 220, 60, 160, 4),
+    "title_description_bullet_points_list_with_icon": ContentConstraints(72, 240, 60, 180, 6),
+    "title_description_chart": ContentConstraints(72, 220, 60, 160, 4),
+    "title_description_chart_table": ContentConstraints(72, 200, 60, 160, 4),
+    "title_description_image": ContentConstraints(72, 240, 60, 180, 3),
+    "title_list_of_cards_with_alternating_image": ContentConstraints(72, 220, 60, 160, 4),
+    "title_list_of_cards_with_image": ContentConstraints(72, 220, 60, 160, 6),
     "title_image_description_list_with_highlighted_text_heading_description": ContentConstraints(
-        72, 150, 42, 72, 4
+        72, 220, 60, 160, 4
     ),
-    "table_of_contents": ContentConstraints(72, 120, 48, 80, 8),
+    "table_of_contents": ContentConstraints(72, 180, 60, 160, 8),
 }
 
 
@@ -246,15 +247,7 @@ class _ContentSlots:
         limit = self.budgets.get(field)
         if limit is None:
             return text
-        # Soft truncation: prefer whole words, but never exceed the limit.
-        if len(text) <= limit:
-            return text
-        suffix = "..." if len(text) > 3 and limit >= 3 else ""
-        truncated = text[: limit - len(suffix)]
-        last_space = truncated.rfind(" ")
-        if last_space > (limit - len(suffix)) * 0.7:
-            truncated = truncated[:last_space]
-        return truncated.rstrip(" .,;:-") + suffix
+        return truncate_content_text(text, limit)
 
     def _next(self, name: str) -> tuple[str, int]:
         index = self.counts.get(name, 0)

@@ -455,6 +455,7 @@ class GenerationWorker:
             outline,
             deck_plan,
             language=claimed.language,
+            source_text=claimed.text,
         )
         return contents, None
 
@@ -501,6 +502,7 @@ class GenerationWorker:
                     language=claimed.language,
                     attempt=attempt,
                     is_cancelled=lambda: self._is_cancelled(claimed.job_id),
+                    source_text=claimed.text,
                 )
                 newly = streamer.consume(
                     events,

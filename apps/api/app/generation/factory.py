@@ -10,7 +10,7 @@ from .stages.content_generator import ThemeDispatchContentGenerator
 from .stages.content_understanding import build_content_understanding
 from .stages.content_writer import OutlineContentWriter, ProviderContentWriter
 from .stages.deck_planner import OutlineDeckPlanner, ProviderDeckPlanner
-from .stages.layout_selector import PresentonLayoutSelector
+from .stages.layout_selector import ThemeDispatchLayoutSelector
 from .stages.orchestrator import GenerationPipeline, NullAssetGenerator, NullAssetPlanner
 from .stages.slide_repairer import DeterministicSlideRepairer
 from .stages.slide_validator import RuleBasedSlideValidator
@@ -96,7 +96,7 @@ def build_story_provider() -> GenerationPipeline:
         content_understanding=build_content_understanding(story_planner),
         deck_planner=deck_planner,
         slide_planner=slide_planner,
-        layout_selector=PresentonLayoutSelector(),
+        layout_selector=ThemeDispatchLayoutSelector(),
         content_writer=content_writer,
         slide_validator=RuleBasedSlideValidator(),
         slide_repairer=DeterministicSlideRepairer(),

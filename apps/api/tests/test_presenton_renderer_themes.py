@@ -24,7 +24,11 @@ def test_every_presenton_layout_exposes_content_constraints() -> None:
 
     assert set(constraints) == set(adapter.layout_ids)
     assert constraints["title_slide"].title_max_chars == 72
+    assert constraints["title_slide"].content_max_chars == 200
     assert constraints["title_description_bullet_points_grid_with_icon"].max_items == 4
+    assert constraints["title_description_bullet_points_grid_with_icon"].block_heading_max_chars == 60
+    assert constraints["title_description_bullet_points_grid_with_icon"].block_body_max_chars == 160
+    assert constraints["title_description_bullet_points_list_with_icon"].block_body_max_chars == 180
     assert constraints["title_description_image"].max_items == 3
 
 

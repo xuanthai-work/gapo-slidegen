@@ -119,4 +119,5 @@ class DeckStreamingProvider(Protocol):
         language: str,
         attempt: int,
         is_cancelled: Callable[[], bool],
+        source_text: str = "",
     ) -> Iterator[GenerationEvent]: ...
