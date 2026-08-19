@@ -105,14 +105,11 @@ class FakeImageProvider:
         return GeneratedImageData(data=self.data, content_type="image/png")
 
 
-def test_generate_image_stores_owned_asset_without_slide_data(tmp_path: Path) -> None:
-    user = _user()
-    session = FakeSession()
-    storage = LocalObjectStorage(tmp_path)
+def test_generate_image_is_permanently_disabled(tmp_path: Path) -> None:
     provider = FakeImageProvider()
-    app.dependency_overrides[get_current_user] = lambda: user
-    app.dependency_overrides[get_session] = lambda: session
-    app.dependency_overrides[get_asset_storage] = lambda: storage
+    app.dependency_overrides[get_current_user] = _user
+    app.dependency_overrides[get_session] = FakeSession
+    app.dependency_overrides[get_asset_storage] = lambda: LocalObjectStorage(tmp_path)
     app.dependency_overrides[get_image_provider] = lambda: provider
     try:
         response = TestClient(app).post(
@@ -122,36 +119,9 @@ def test_generate_image_stores_owned_asset_without_slide_data(tmp_path: Path) ->
     finally:
         app.dependency_overrides.clear()
 
-    assert response.status_code == 201
-    assert response.json()["content_type"] == "image/png"
-    record = session.added[0]
-    assert isinstance(record, AssetRecord)
-    assert record.owner_id == user.id
-    assert record.filename.startswith("generated-")
-    assert storage.get(record.storage_key) == provider.data
-    assert provider.requests == [
-        ImageGenerationRequest(
-            prompt="A clean editorial illustration",
-            aspect_ratio="16:9",
-        )
-    ]
-
-
-def test_generate_image_rejects_unsupported_provider_bytes(tmp_path: Path) -> None:
-    app.dependency_overrides[get_current_user] = _user
-    app.dependency_overrides[get_session] = FakeSession
-    app.dependency_overrides[get_asset_storage] = lambda: LocalObjectStorage(tmp_path)
-    app.dependency_overrides[get_image_provider] = lambda: FakeImageProvider(b"not-an-image")
-    try:
-        response = TestClient(app).post(
-            "/v1/assets/generate",
-            json={"prompt": "An image", "aspect_ratio": "16:9"},
-        )
-    finally:
-        app.dependency_overrides.clear()
-
-    assert response.status_code == 502
-    assert "unsupported image format" in response.json()["detail"]
+    assert response.status_code == 410
+    assert response.json()["detail"] == "Text-to-image generation has been disabled."
+    assert provider.requests == []
 
 
 def test_generate_image_rejects_blank_prompt_before_provider_call(tmp_path: Path) -> None:
@@ -168,5 +138,6 @@ def test_generate_image_rejects_blank_prompt_before_provider_call(tmp_path: Path
     finally:
         app.dependency_overrides.clear()
 
-    assert response.status_code == 422
+    assert response.status_code == 410
+    assert response.json()["detail"] == "Text-to-image generation has been disabled."
     assert provider.requests == []

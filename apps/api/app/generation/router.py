@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -9,8 +10,18 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from sqlalchemy.orm import Session
 
 from ..auth import get_current_user
-from ..database import get_session
+from ..config import get_settings
+from ..database import SessionLocal, get_session
 from ..models import GenerationJob, JobStatus, JobType, OutlineRecord, PresentationRecord, User
+from .checkpoint_repository import GenerationCheckpointRepository
+from .checkpoints import GenerationCheckpointService
+from .event_factory import build_generation_event_subscriber
+from .event_sse import (
+    acquire_sse_slot,
+    iterate_generation_sse,
+    release_sse_slot,
+    TERMINAL_STATUSES,
+)
 from .factory import build_rewrite_provider, build_story_provider
 from .outlines import (
     InvalidOutline,
@@ -38,6 +49,7 @@ from .provider import (
 from .validation import InvalidPresentationDocument, validate_presentation_document
 
 router = APIRouter(tags=["generation"])
+logger = logging.getLogger(__name__)
 
 
 class GenerationInput(BaseModel):
@@ -424,32 +436,101 @@ def cancel_job(
         raise _job_http_error(error) from error
 
 
+def _sse_headers() -> dict[str, str]:
+    return {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    }
+
+
 @router.get("/v1/jobs/{job_id}/events")
 async def stream_job_events(
     job_id: UUID,
     user: Annotated[User, Depends(get_current_user)],
-    service: Annotated[GenerationService, Depends(get_generation_service)],
 ) -> StreamingResponse:
-    """Stream job progress updates as Server-Sent Events.
+    """Stream job progress without holding an ORM session for the response life."""
 
-    The endpoint polls the job record in the background and emits a
-    ``progress`` event whenever the status or progress changes. While the job
-    is running it also emits ``slide`` events whenever the worker adds a new
-    slide to ``stream_data``, so the dashboard can show a live preview.
-    """
-    heartbeat_seconds = 25
-    poll_seconds = 0.2
-    terminal_statuses = {"succeeded", "failed", "canceled"}
+    with SessionLocal() as session:
+        job = GenerationService(session).get_job(job_id, user)
+        if job is None:
+            _raise_not_found("Job not found.")
+        initial_progress = JobView.model_validate(job).model_dump_json()
+        checkpoint_slides = [
+            row.canonical_slide
+            for row in GenerationCheckpointService(
+                GenerationCheckpointRepository(session)
+            ).list_for_job(job_id)
+            if isinstance(row.canonical_slide, dict)
+        ]
 
-    async def event_generator():
+    user_key = str(user.id)
+    if not acquire_sse_slot(user_key):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many live generation streams.",
+        )
+
+    async def poll_terminal() -> tuple[str | None, bool]:
+        def _read() -> tuple[str | None, bool]:
+            with SessionLocal() as session:
+                current = GenerationService(session).get_job(job_id, user)
+                if current is None:
+                    return json.dumps({"detail": "Job not found."}), True
+                payload = JobView.model_validate(current).model_dump_json()
+                return payload, current.status.value in TERMINAL_STATUSES
+
+        return await asyncio.to_thread(_read)
+
+    settings = get_settings()
+    subscriber = None
+    if settings.generation_streaming_enabled:
+        try:
+            subscriber = build_generation_event_subscriber(settings)
+        except Exception as error:
+            logger.warning("generation Redis subscriber unavailable: %s", error)
+    live = subscriber.subscribe(str(job_id)) if subscriber else None
+
+    async def guarded(chunks):
+        try:
+            async for chunk in chunks:
+                yield chunk
+        finally:
+            release_sse_slot(user_key)
+            if subscriber is not None:
+                aclose = getattr(subscriber, "aclose", None)
+                if aclose is not None:
+                    try:
+                        await aclose()
+                    except Exception:
+                        pass
+
+    if live is not None or checkpoint_slides:
+        return StreamingResponse(
+            guarded(
+                iterate_generation_sse(
+                    initial_progress=initial_progress,
+                    checkpoint_slides=checkpoint_slides,
+                    live_events=live,
+                    poll_terminal=poll_terminal,
+                )
+            ),
+            media_type="text/event-stream",
+            headers=_sse_headers(),
+        )
+
+    async def legacy_poll():
         last_payload: str | None = None
         last_stream_slide_count = 0
         elapsed_heartbeat = 0.0
+        poll_seconds = 0.2
+        heartbeat_seconds = 25
         while True:
-            # Expire the in-memory object so each poll reads fresh DB state; otherwise
-            # SQLAlchemy returns the cached job from the first SSE request snapshot.
-            await asyncio.to_thread(service.session.expire_all)
-            job = await asyncio.to_thread(service.get_job, job_id, user)
+            def _read_job() -> GenerationJob | None:
+                with SessionLocal() as session:
+                    return GenerationService(session).get_job(job_id, user)
+
+            job = await asyncio.to_thread(_read_job)
             if job is None:
                 payload = json.dumps({"detail": "Job not found."})
                 if payload != last_payload:
@@ -466,7 +547,7 @@ async def stream_job_events(
                 last_stream_slide_count = len(stream_slides)
                 yield _sse_slide_event(stream or {}, stream_slides)
 
-            if job.status.value in terminal_statuses:
+            if job.status.value in TERMINAL_STATUSES:
                 break
             await asyncio.sleep(poll_seconds)
             elapsed_heartbeat += poll_seconds
@@ -475,13 +556,9 @@ async def stream_job_events(
                 elapsed_heartbeat = 0.0
 
     return StreamingResponse(
-        event_generator(),
+        guarded(legacy_poll()),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
+        headers=_sse_headers(),
     )
 
 

@@ -1,8 +1,23 @@
 from uuid import uuid4
 
+from app.generation import factory
 from app.generation.provider import GenerationRequest
+from app.generation.stages.orchestrator import NullAssetPlanner
 from app.generation.stages.asset_planner import StubAssetPlanner, VisualIntentAssetPlanner
 from app.generation.stages.models import StoryOutline, StoryOutlineItem
+from app.generation.stub_provider import StubPresentationProvider
+
+
+def test_runtime_pipeline_uses_noop_asset_planner(monkeypatch) -> None:
+    monkeypatch.setattr(
+        factory,
+        "_build_story_planner",
+        lambda: StubPresentationProvider(),
+    )
+
+    pipeline = factory.build_story_provider()
+
+    assert isinstance(pipeline.asset_planner, NullAssetPlanner)
 
 
 def test_split_image_slide_requests_main_visual_panel() -> None:

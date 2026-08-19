@@ -1,12 +1,23 @@
+import logging
+
 from ..config import get_settings
 from .company_gateway_provider import CompanyGatewayProvider
-from .gemini_image_provider import GoogleAIStudioImageProvider
 from .provider import ProviderConfigurationError
-from .stages.asset_planner import StubAssetPlanner
+from .checkpoint_repository import GenerationCheckpointRepository
+from .checkpoints import GenerationCheckpointService
+from .event_factory import build_generation_event_publisher
 from .stages.content_generator import ThemeDispatchContentGenerator
 from .stages.content_understanding import build_content_understanding
-from .stages.orchestrator import GenerationPipeline, NullAssetGenerator
+from .stages.content_writer import OutlineContentWriter, ProviderContentWriter
+from .stages.deck_planner import OutlineDeckPlanner, ProviderDeckPlanner
+from .stages.layout_selector import PresentonLayoutSelector
+from .stages.orchestrator import GenerationPipeline, NullAssetGenerator, NullAssetPlanner
+from .stages.slide_repairer import DeterministicSlideRepairer
+from .stages.slide_validator import RuleBasedSlideValidator
+from .stages.slide_planner import OutlineSlidePlanner, ProviderSlidePlanner
 from .stub_provider import StubPresentationProvider
+
+logger = logging.getLogger(__name__)
 
 
 # Legacy Gemini provider is kept as a disabled fallback. To re-enable, import
@@ -56,17 +67,82 @@ def _build_story_planner():
 def build_story_provider() -> GenerationPipeline:
     """Build the full generation pipeline used by the worker."""
     story_planner = _build_story_planner()
+    outline_deck_planner = OutlineDeckPlanner()
+    outline_slide_planner = OutlineSlidePlanner()
+    outline_content_writer = OutlineContentWriter()
+    if hasattr(story_planner, "plan_deck") and hasattr(story_planner, "plan_slide"):
+        deck_planner = ProviderDeckPlanner(
+            story_planner,
+            fallback=outline_deck_planner,
+        )
+        slide_planner = ProviderSlidePlanner(
+            story_planner,
+            fallback=outline_slide_planner,
+        )
+    else:
+        deck_planner = outline_deck_planner
+        slide_planner = outline_slide_planner
+    content_writer = (
+        ProviderContentWriter(
+            story_planner,
+            fallback=outline_content_writer,
+        )
+        if hasattr(story_planner, "write_content_batch")
+        else outline_content_writer
+    )
     return GenerationPipeline(
         story_planner=story_planner,
         content_generator=ThemeDispatchContentGenerator(),
         content_understanding=build_content_understanding(story_planner),
-        asset_planner=StubAssetPlanner(),
+        deck_planner=deck_planner,
+        slide_planner=slide_planner,
+        layout_selector=PresentonLayoutSelector(),
+        content_writer=content_writer,
+        slide_validator=RuleBasedSlideValidator(),
+        slide_repairer=DeterministicSlideRepairer(),
+        asset_planner=NullAssetPlanner(),
         asset_generator=NullAssetGenerator(),
     )
 
 
 # Backward-compatible alias used by older callers; prefer build_story_provider.
 build_provider = build_story_provider
+
+
+class SessionCheckpointAdapter:
+    def __init__(self, session_factory) -> None:
+        self.session_factory = session_factory
+
+    def record_event(self, event, *, validated_canonical_slide=None):
+        with self.session_factory() as session:
+            recorded = GenerationCheckpointService(
+                GenerationCheckpointRepository(session)
+            ).record_event(
+                event,
+                validated_canonical_slide=validated_canonical_slide,
+            )
+            session.commit()
+            return recorded
+
+
+def build_generation_worker(session_factory):
+    """Build the worker. Streaming stays off until SLIDEGEN_GENERATION_STREAMING_ENABLED=true."""
+    from .worker import GenerationWorker
+
+    settings = get_settings()
+    publisher = None
+    if settings.generation_streaming_enabled:
+        try:
+            publisher = build_generation_event_publisher(settings)
+        except Exception as error:
+            logger.warning("generation Redis publisher unavailable: %s", error)
+    return GenerationWorker(
+        session_factory,
+        build_story_provider(),
+        event_publisher=publisher,
+        checkpoint_service=SessionCheckpointAdapter(session_factory),
+        streaming_enabled=settings.generation_streaming_enabled,
+    )
 
 
 def build_rewrite_provider():
@@ -83,25 +159,6 @@ def build_rewrite_provider():
 
 
 def build_image_provider():
-    settings = get_settings()
-    provider_name = settings.image_provider.strip().lower()
-    if provider_name in {"", "disabled", "none"}:
-        raise ProviderConfigurationError(
-            "Image generation is not configured. Set SLIDEGEN_IMAGE_PROVIDER and an image model."
-        )
-    if provider_name in {"google-ai-studio", "gemini"}:
-        api_key = settings.google_api_key.get_secret_value().strip() if settings.google_api_key else ""
-        model = settings.google_image_model.strip() if settings.google_image_model else ""
-        missing = _missing_settings(
-            ("SLIDEGEN_GOOGLE_API_KEY", api_key),
-            ("SLIDEGEN_GOOGLE_IMAGE_MODEL", model),
-        )
-        if missing:
-            raise ProviderConfigurationError(
-                "Google AI Studio image provider is missing: " + ", ".join(missing)
-            )
-        return GoogleAIStudioImageProvider(api_key=api_key, model=model)
     raise ProviderConfigurationError(
-        f"Image provider {provider_name!r} is not configured. "
-        "Use 'disabled' or 'google-ai-studio'."
+        "Text-to-image generation has been disabled."
     )

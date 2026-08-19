@@ -1,11 +1,14 @@
 from .auth import User, UserSession
 from .asset import AssetRecord
+from .generation_checkpoint import GenerationCheckpoint, GenerationCheckpointStatus
 from .job import GenerationJob, JobStatus, JobType, SourceRecord
 from .outline import OutlineRecord
 from .presentation import PresentationRecord
 
 __all__ = [
     "GenerationJob",
+    "GenerationCheckpoint",
+    "GenerationCheckpointStatus",
     "AssetRecord",
     "JobStatus",
     "JobType",

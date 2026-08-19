@@ -1,19 +1,28 @@
 import logging
-from dataclasses import dataclass, replace
-from time import sleep
+from dataclasses import dataclass
+from time import monotonic, sleep
 from uuid import UUID, uuid4
 
 from sqlalchemy.orm import Session, sessionmaker
 
-from ..config import get_settings
 from ..jobs.repository import JobRepository
 from ..models import GenerationJob, JobStatus, JobType, PresentationRecord, SourceRecord
-from ..storage.local import LocalObjectStorage
-from .factory import build_image_provider
-from .provider import GenerationRequest, OutlineRequest, ProviderConfigurationError
-from .stages.asset_generator import ImageAssetGenerator
+from .checkpoints import InvalidGenerationCheckpoint
+from .event_transport import PublishResult
+from .layouts import ContentConstraints
+from .models import SlideContent
+from .provider import GenerationCancelledError, GenerationRequest, OutlineRequest, ProviderResponseError
 from .stages.models import StoryOutline
 from .stages.orchestrator import GenerationPipeline
+from .stream_runtime import (
+    IncrementalSlideStreamer,
+    MAX_STREAM_REMAINDER_ATTEMPTS,
+    log_generation_metric,
+    remaining_slide_ids,
+    stream_slots_for_constraints,
+    subset_deck_plan,
+    subset_story_outline,
+)
 
 DEFAULT_STAGE_MESSAGES: dict[str, dict[str, str]] = {
     "analyzing": {"en": "Analyzing the source...", "vi": "Đang phân tích nguồn..."},
@@ -129,14 +138,47 @@ class ClaimedGeneration:
     theme_id: str
 
 
+class NullEventPublisher:
+    def publish(self, event) -> PublishResult:
+        del event
+        return PublishResult(published=False)
+
+
 class GenerationWorker:
     def __init__(
         self,
         session_factory: sessionmaker[Session],
         pipeline: GenerationPipeline,
+        *,
+        event_publisher=None,
+        checkpoint_service=None,
+        streaming_enabled: bool = False,
+        snapshot_coalesce_seconds: float = 0.1,
     ) -> None:
         self.session_factory = session_factory
         self.pipeline = pipeline
+        self.event_publisher = event_publisher or NullEventPublisher()
+        self.checkpoint_service = checkpoint_service
+        self.streaming_enabled = streaming_enabled
+        self.snapshot_coalesce_seconds = snapshot_coalesce_seconds
+        self._cancel_checked_at = 0.0
+        self._cancel_cached = False
+
+    @staticmethod
+    def stream_layout_maps(
+        outline: StoryOutline,
+        constraints: dict[str, ContentConstraints],
+    ) -> tuple[dict[str, str], dict[str, tuple[str, ...]]]:
+        selected = {
+            item.id: item.layout_id
+            for item in outline.items
+            if item.layout_id
+        }
+        slots = {
+            layout_id: stream_slots_for_constraints(constraints[slide_id])
+            for slide_id, layout_id in selected.items()
+        }
+        return selected, slots
 
     def _claim(self) -> ClaimedGeneration | None:
         with self.session_factory() as session:
@@ -176,25 +218,6 @@ class GenerationWorker:
             )
             session.commit()
             return claimed
-
-    def _generate_assets(self, asset_plan) -> dict[tuple[int, str], str]:
-        if not asset_plan.requests:
-            return {}
-        try:
-            image_provider = build_image_provider()
-        except ProviderConfigurationError:
-            return {}
-        generator = ImageAssetGenerator(
-            image_provider=image_provider,
-            session_factory=self.session_factory,
-            storage=LocalObjectStorage(get_settings().storage_root),
-        )
-        generated = generator.generate(asset_plan)
-        return {
-            (asset.slot.slide_index, asset.slot.name): asset.asset_id
-            for asset in generated
-            if asset.asset_id is not None
-        }
 
     def _resolve_outline(self, claimed: ClaimedGeneration, tracker: _StreamTracker) -> StoryOutline:
         outline_items = claimed.outline
@@ -277,15 +300,42 @@ class GenerationWorker:
         try:
             logger.info("[worker] generating outline for job %s", claimed.job_id)
             outline = self._resolve_outline(claimed, tracker)
+            deck_plan = self.pipeline.plan_deck(base_request, outline)
+            outline = self.pipeline.select_layouts(
+                outline,
+                theme_id=claimed.theme_id,
+                deck_plan=deck_plan,
+            )
             tracker.set(40, stage="outlining", message=f"Outline ready: {len(outline.items)} slides")
             logger.info("[worker] outline ready for job %s (%d slides)", claimed.job_id, len(outline.items))
-            asset_plan = self.pipeline.plan_assets(outline, base_request)
-            asset_plan = replace(asset_plan, owner_id=claimed.owner_id)
             tracker.set(50, stage="rendering")
-            asset_map = self._generate_assets(asset_plan)
+            asset_map: dict[tuple[int, str], str] = {}
+            contents, streamed_slides = self._write_or_stream_content(
+                claimed,
+                base_request,
+                outline,
+                deck_plan,
+                assets=asset_map,
+            )
             tracker.set(60, stage="rendering")
             logger.info("[worker] rendering for job %s", claimed.job_id)
-            document = self._render_slide_by_slide(base_request, outline, assets=asset_map, tracker=tracker)
+            if streamed_slides is None:
+                document = self._render_slide_by_slide(
+                    base_request,
+                    outline,
+                    assets=asset_map,
+                    contents=contents,
+                    tracker=tracker,
+                )
+            else:
+                document = self._build_document(
+                    base_request,
+                    streamed_slides,
+                    theme=None,
+                )
+                for index, slide in enumerate(streamed_slides):
+                    progress = 60 + int((index + 1) / max(len(streamed_slides), 1) * 30)
+                    tracker.slide(progress, index, slide)
             tracker.set(95, stage="finalizing")
             logger.info("[worker] render complete for job %s", claimed.job_id)
             with self.session_factory() as session:
@@ -311,6 +361,9 @@ class GenerationWorker:
                 session.commit()
                 logger.info("[worker] job %s succeeded", claimed.job_id)
             return True
+        except GenerationCancelledError:
+            log_generation_metric("cancellation", job_id=claimed.job_id)
+            return True
         except Exception as error:
             logger.exception("[worker] job %s failed", claimed.job_id)
             self._fail_running_job(claimed.job_id, error)
@@ -322,14 +375,21 @@ class GenerationWorker:
         outline: StoryOutline,
         *,
         assets: dict[tuple[int, str], str],
+        contents: dict[str, SlideContent],
         tracker: _StreamTracker,
     ) -> dict[str, object]:
         """Render the presentation one slide at a time, emitting stream events."""
-        slides = self.pipeline.content_generator.render_slides(request, outline, assets=assets)
+        slides = self.pipeline.content_generator.render_slides(
+            request,
+            outline,
+            assets=assets,
+            contents=contents,
+        )
         total = len(slides)
         theme: dict[str, object] | None = None
         streamed_slides: list[dict[str, object]] = []
         for index, slide in enumerate(slides):
+            slide = self.pipeline.validate_slide(slide)
             streamed_slides.append(slide)
             if theme is None:
                 # Pull theme from the first compiled slide if available; otherwise
@@ -338,11 +398,170 @@ class GenerationWorker:
                 theme = slide.get("theme") if isinstance(slide.get("theme"), dict) else None  # type: ignore[arg-type]
             progress = 60 + int((index + 1) / max(total, 1) * 30)
             tracker.slide(progress, index, slide)
-            # Delay so the dashboard can show each slide appearing one by one.
-            sleep(0.8)
         return self._build_document(request, streamed_slides, theme=theme)
+
+    def _write_or_stream_content(
+        self,
+        claimed: ClaimedGeneration,
+        request: GenerationRequest,
+        outline: StoryOutline,
+        deck_plan,
+        *,
+        assets: dict[tuple[int, str], str],
+    ) -> tuple[dict[str, SlideContent], list[dict[str, object]] | None]:
+        provider = self.pipeline.story_planner
+        if (
+            self.streaming_enabled
+            and deck_plan is not None
+            and hasattr(provider, "stream_deck_content")
+        ):
+            constraints = {
+                item.id: self.pipeline.layout_selector.content_constraints(item.layout_id)
+                for item in outline.items
+                if item.layout_id and self.pipeline.layout_selector is not None
+            }
+            selected, layout_slots = self.stream_layout_maps(outline, constraints)
+            contents: dict[str, SlideContent] = {}
+
+            def compile_slide(index: int, written: dict[str, SlideContent]) -> dict[str, object]:
+                contents.update(written)
+                return self.pipeline.content_generator.render_slide(
+                    request,
+                    outline,
+                    index=index,
+                    assets=assets,
+                    contents=written,
+                )
+
+            streamer = IncrementalSlideStreamer(
+                publisher=self.event_publisher,
+                checkpoints=self.checkpoint_service or _NullCheckpoints(),
+                compile_slide=compile_slide,
+                validate_slide=self.pipeline.validate_slide,
+                delay_seconds=self.snapshot_coalesce_seconds,
+            )
+            compiled = self._stream_with_remainder_retry(
+                provider,
+                claimed=claimed,
+                outline=outline,
+                deck_plan=deck_plan,
+                selected=selected,
+                layout_slots=layout_slots,
+                constraints=constraints,
+                streamer=streamer,
+            )
+            return contents, compiled
+        contents = self.pipeline.write_content(
+            outline,
+            deck_plan,
+            language=claimed.language,
+        )
+        return contents, None
+
+    def _stream_with_remainder_retry(
+        self,
+        provider,
+        *,
+        claimed: ClaimedGeneration,
+        outline: StoryOutline,
+        deck_plan,
+        selected: dict[str, str],
+        layout_slots: dict[str, tuple[str, ...]],
+        constraints,
+        streamer: IncrementalSlideStreamer,
+    ) -> list[dict[str, object]]:
+        slide_ids = [item.id for item in outline.items]
+        compiled_by_id: dict[str, dict[str, object]] = {}
+        for attempt in range(1, MAX_STREAM_REMAINDER_ATTEMPTS + 1):
+            remaining = remaining_slide_ids(slide_ids, compiled_by_id)
+            if not remaining:
+                break
+            if attempt > 1:
+                log_generation_metric(
+                    "retries",
+                    job_id=claimed.job_id,
+                    attempt=attempt,
+                    remaining=len(remaining),
+                )
+            remainder_outline = subset_story_outline(outline, remaining)
+            remainder_plan = subset_deck_plan(deck_plan, remaining)
+            remainder_selected = {
+                slide_id: layout_id
+                for slide_id, layout_id in selected.items()
+                if slide_id in remaining
+            }
+            try:
+                events = provider.stream_deck_content(
+                    job_id=str(claimed.job_id),
+                    outline=remainder_outline,
+                    deck_plan=remainder_plan,
+                    selected_layouts=remainder_selected,
+                    layout_slots=layout_slots,
+                    constraints=constraints,
+                    language=claimed.language,
+                    attempt=attempt,
+                    is_cancelled=lambda: self._is_cancelled(claimed.job_id),
+                )
+                newly = streamer.consume(
+                    events,
+                    slide_ids=slide_ids,
+                    skip_ids=compiled_by_id,
+                )
+            except GenerationCancelledError:
+                raise
+            except InvalidGenerationCheckpoint:
+                raise
+            except Exception as error:
+                newly = list(streamer.compiled)
+                self._merge_compiled_slides(compiled_by_id, newly)
+                remaining = remaining_slide_ids(slide_ids, compiled_by_id)
+                if not remaining:
+                    break
+                if attempt >= MAX_STREAM_REMAINDER_ATTEMPTS:
+                    raise ProviderResponseError(
+                        "Generation stream ended before every slide was completed."
+                    ) from error
+                logger.warning(
+                    "generation stream attempt %s incomplete for job %s: %s",
+                    attempt,
+                    claimed.job_id,
+                    error,
+                )
+                continue
+            self._merge_compiled_slides(compiled_by_id, newly)
+        missing = remaining_slide_ids(slide_ids, compiled_by_id)
+        if missing:
+            raise ProviderResponseError(
+                "Generation stream ended before every slide was completed."
+            )
+        return [compiled_by_id[slide_id] for slide_id in slide_ids]
+
+    @staticmethod
+    def _merge_compiled_slides(
+        compiled_by_id: dict[str, dict[str, object]],
+        newly: list[dict[str, object]],
+    ) -> None:
+        for slide in newly:
+            slide_id = slide.get("id")
+            if isinstance(slide_id, str) and slide_id not in compiled_by_id:
+                compiled_by_id[slide_id] = slide
+
+    def _is_cancelled(self, job_id: UUID) -> bool:
+        now = monotonic()
+        if now - self._cancel_checked_at < 1.0:
+            return self._cancel_cached
+        self._cancel_checked_at = now
+        with self.session_factory() as session:
+            self._cancel_cached = self._load_running_job(session, job_id) is None
+        return self._cancel_cached
 
     def run_forever(self, poll_seconds: float = 1.0) -> None:
         while True:
             if not self.process_once():
                 sleep(poll_seconds)
+
+
+class _NullCheckpoints:
+    def record_event(self, event, *, validated_canonical_slide=None):
+        del event, validated_canonical_slide
+        return None

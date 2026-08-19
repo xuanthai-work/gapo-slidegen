@@ -1,8 +1,7 @@
 import logging
 
 from .database import SessionLocal
-from .generation.factory import build_story_provider
-from .generation.worker import GenerationWorker
+from .generation.factory import build_generation_worker
 
 
 def main() -> None:
@@ -10,7 +9,7 @@ def main() -> None:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    worker = GenerationWorker(SessionLocal, build_story_provider())
+    worker = build_generation_worker(SessionLocal)
     try:
         worker.run_forever()
     except KeyboardInterrupt:

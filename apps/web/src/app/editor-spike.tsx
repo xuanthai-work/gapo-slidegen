@@ -32,8 +32,16 @@ import {
   type Slide,
   type SlideElement,
 } from "@gapo-slidegen/slide-schema";
-import { ApiError, apiFetch, type GenerationJob, type StoredAsset, type StoredPresentation } from "../lib/api";
-import { slideSchema } from "@gapo-slidegen/slide-schema";
+import { ApiError, apiFetch, type StoredAsset, type StoredPresentation } from "../lib/api";
+import {
+  subscribeGenerationEvents,
+  type JobSlidePayload,
+} from "../lib/generation-events";
+import {
+  applyGenerationEvent,
+  emptyGenerationPreview,
+  type GenerationPreviewEvent,
+} from "../lib/generation-preview";
 import { ToastProvider } from "./components/toast-provider";
 import { useToast } from "./components/use-toast";
 import { CommandPaletteTrigger } from "./components/command-palette-trigger";
@@ -93,13 +101,6 @@ function rewriteTextElements(
     return element;
   });
 }
-
-type JobSlidePayload = {
-  stage: string;
-  message: string;
-  slide_count: number;
-  slides: Array<unknown>;
-};
 
 function PresentSlide({
   slide,
@@ -168,7 +169,8 @@ function EditorWorkspace({ presentationId: initialPresentationId, jobId }: { pre
   const [generationStage, setGenerationStage] = useState("Starting generation…");
   const [generationProgress, setGenerationProgress] = useState(0);
   const [generationError, setGenerationError] = useState<string | null>(null);
-  const generationEventSourceRef = useRef<EventSource | null>(null);
+  const [generationPreview, setGenerationPreview] = useState(emptyGenerationPreview);
+  const [awaitingCanonical, setAwaitingCanonical] = useState(false);
 
   const revisionRef = useRef(0);
   const readyRef = useRef(false);
@@ -202,82 +204,46 @@ function EditorWorkspace({ presentationId: initialPresentationId, jobId }: { pre
 
   function applyStreamedSlides(payload: JobSlidePayload) {
     setGenerationStage(payload.message || `Building ${payload.slide_count} slides…`);
-    const parsedSlides = payload.slides.flatMap((raw) => {
-      const result = slideSchema.safeParse(raw);
-      return result.success ? [result.data] : [];
-    });
-    if (parsedSlides.length > 0) {
-      setDocument((prev) => ({ ...prev, slides: parsedSlides }));
-      setInitialDocument((prev) => ({ ...prev, slides: parsedSlides }));
-      setActiveSlideIndex(parsedSlides.length - 1);
-    }
   }
 
   useEffect(() => {
     if (!jobId || !generating) return;
 
-    const url = `/api/jobs/${jobId}/events`;
-    const source = new EventSource(url);
-    generationEventSourceRef.current = source;
-
     function finishWithPresentation(presentationIdValue: string) {
-      source.close();
-      generationEventSourceRef.current = null;
       window.history.replaceState(null, "", `/editor?presentation=${presentationIdValue}`);
       setGenerating(false);
+      setGenerationPreview(emptyGenerationPreview());
+      setAwaitingCanonical(true);
       setPresentationId(presentationIdValue);
       setSaveState("Loading…");
     }
 
-    source.addEventListener("progress", (event) => {
-      try {
-        const job = JSON.parse(event.data) as GenerationJob;
+    return subscribeGenerationEvents({
+      jobId,
+      onProgress(job) {
         setGenerationProgress(job.progress);
         if (job.status === "succeeded" && job.result?.presentation_id) {
           finishWithPresentation(job.result.presentation_id);
         } else if (job.status === "failed") {
-          source.close();
-          generationEventSourceRef.current = null;
           setGenerating(false);
           setGenerationError(job.error_message || "Generation failed.");
         } else if (job.status === "canceled") {
-          source.close();
-          generationEventSourceRef.current = null;
           setGenerating(false);
           setGenerationError("Generation was canceled.");
         }
-      } catch { /* ignore malformed SSE */ }
-    });
-
-    source.addEventListener("slide", (event) => {
-      try {
-        const payload = JSON.parse(event.data) as JobSlidePayload;
+      },
+      onGeneration(payload: GenerationPreviewEvent) {
+        setGenerationPreview((current) => applyGenerationEvent(current, payload));
+        setGenerationStage("Writing slides…");
+      },
+      onSlide(payload) {
         applyStreamedSlides(payload);
-      } catch { /* ignore */ }
+      },
+      onDisconnectError(message) {
+        setGenerating(false);
+        setGenerationError(message);
+      },
     });
-
-    source.addEventListener("error", () => {
-      source.close();
-      generationEventSourceRef.current = null;
-      apiFetch<GenerationJob>(`/v1/jobs/${jobId}`)
-        .then((job) => {
-          if (job.status === "succeeded" && job.result?.presentation_id) {
-            finishWithPresentation(job.result.presentation_id);
-          } else if (job.status === "failed" || job.status === "canceled") {
-            setGenerating(false);
-            setGenerationError(job.error_message || "Generation failed.");
-          }
-        })
-        .catch(() => {
-          setGenerationError("Lost connection to the server.");
-          setGenerating(false);
-        });
-    });
-
-    return () => {
-      source.close();
-      generationEventSourceRef.current = null;
-    };
   }, [jobId, generating]);
 
   useEffect(() => {
@@ -291,6 +257,7 @@ function EditorWorkspace({ presentationId: initialPresentationId, jobId }: { pre
         revisionRef.current = stored.revision;
         skipNextDocumentRef.current = true;
         readyRef.current = true;
+        setAwaitingCanonical(false);
         setInitialDocument(parsed);
         setDocument(parsed);
         setActiveSlideIndex(0);
@@ -307,7 +274,7 @@ function EditorWorkspace({ presentationId: initialPresentationId, jobId }: { pre
   }, [presentationId]);
 
   async function flushPendingSave() {
-    if (!presentationId || savingRef.current || saveBlockedRef.current) return;
+    if (generating || awaitingCanonical || !presentationId || savingRef.current || saveBlockedRef.current) return;
     const pending = pendingDocumentRef.current;
     if (!pending) return;
 
@@ -348,7 +315,7 @@ function EditorWorkspace({ presentationId: initialPresentationId, jobId }: { pre
   }
 
   useEffect(() => {
-    if (!presentationId || !readyRef.current) return;
+    if (generating || awaitingCanonical || !presentationId || !readyRef.current) return;
     if (skipNextDocumentRef.current) {
       skipNextDocumentRef.current = false;
       return;
@@ -987,35 +954,52 @@ function EditorWorkspace({ presentationId: initialPresentationId, jobId }: { pre
     <CommandPaletteTrigger commands={commands}>
       {loadError ? (
         <main className="empty">{loadError}</main>
+      ) : generating || awaitingCanonical || generationError ? (
+        <main className="editor-shell">
+          <div className={`editor-generation-bar${generationError ? " editor-generation-bar--error" : ""}`} aria-live="polite">
+            {generationError ? (
+              <>
+                <Sparkle size={15} />
+                <span className="editor-generation-bar__message">{generationError}</span>
+                <Link className="button" href="/">Back to dashboard</Link>
+              </>
+            ) : (
+              <>
+                <Sparkle size={15} className="editor-generation-bar__icon" />
+                <span className="editor-generation-bar__message">
+                  {awaitingCanonical ? "Loading presentation…" : generationStage}
+                </span>
+                <div
+                  className="editor-generation-bar__progress"
+                  role="progressbar"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={generationProgress}
+                >
+                  <span style={{ width: `${Math.max(4, generationProgress)}%` }} />
+                </div>
+              </>
+            )}
+          </div>
+          {generating && generationPreview.slides.length > 0 && (
+            <aside className="editor-generation-preview" aria-label="Generation preview">
+              {generationPreview.slides.map((item) => (
+                <article key={item.slideId} className="editor-generation-preview__slide">
+                  <strong>{item.slots.title || item.slideId}</strong>
+                  {Object.entries(item.slots)
+                    .filter(([slot]) => slot !== "title")
+                    .map(([slot, value]) => (
+                      <p key={slot}>{value}</p>
+                    ))}
+                </article>
+              ))}
+            </aside>
+          )}
+        </main>
       ) : !slide ? (
         <main className="empty">No slide is available.</main>
       ) : (
         <main className="editor-shell">
-          {(generating || generationError) && (
-            <div className={`editor-generation-bar${generationError ? " editor-generation-bar--error" : ""}`} aria-live="polite">
-              {generationError ? (
-                <>
-                  <Sparkle size={15} />
-                  <span className="editor-generation-bar__message">{generationError}</span>
-                  <Link className="button" href="/">Back to dashboard</Link>
-                </>
-              ) : (
-                <>
-                  <Sparkle size={15} className="editor-generation-bar__icon" />
-                  <span className="editor-generation-bar__message">{generationStage}</span>
-                  <div
-                    className="editor-generation-bar__progress"
-                    role="progressbar"
-                    aria-valuemin={0}
-                    aria-valuemax={100}
-                    aria-valuenow={generationProgress}
-                  >
-                    <span style={{ width: `${Math.max(4, generationProgress)}%` }} />
-                  </div>
-                </>
-              )}
-            </div>
-          )}
           <header className="topbar">
             <div className="topbar__leading">
               <Link className="icon-button" href="/" aria-label="Back to presentations" title="Back to presentations">

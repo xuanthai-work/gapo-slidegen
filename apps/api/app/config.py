@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     source_retention_hours: int = Field(default=24, ge=1, le=24 * 365)
     retention_cleanup_interval_seconds: int = Field(default=300, ge=10, le=24 * 60 * 60)
     retention_cleanup_batch_size: int = Field(default=100, ge=1, le=1_000)
+    generation_streaming_enabled: bool = False
+    redis_url: SecretStr = SecretStr("")
+    generation_event_channel_prefix: str = "slidegen:generation"
     generation_provider: str = "stub"
     image_provider: str = "disabled"
     google_api_key: SecretStr | None = None

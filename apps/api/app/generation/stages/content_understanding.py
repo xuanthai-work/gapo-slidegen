@@ -72,6 +72,10 @@ class CompanyGatewayContentUnderstanding:
         language: str,
         source_kind: str,
     ) -> tuple[str, str]:
+        # Match the outline stage's input window so the understanding that
+        # steers the outline is derived from the same source slice the
+        # outline actually sees. The provider exposes the configured limit.
+        max_input_chars = getattr(self.provider, "max_input_chars", 120_000)
         source_kind_instruction = (
             "The user provided a creative request or prompt. Infer what the deck is likely about, who would care, and what tone would resonate."
             if source_kind == "prompt"
@@ -95,7 +99,7 @@ class CompanyGatewayContentUnderstanding:
                 f"4. key_takeaways: 3-6 điểm chính người xem cần nhớ\n\n"
                 f"Tiêu đề: {title}\n"
                 f"{source_kind_instruction}\n\n"
-                f"Nội dung nguồn:\n{text[:40_000]}\n"
+                f"Nội dung nguồn:\n{text[:max_input_chars]}\n"
             )
             if sections_text:
                 user += f"\nCác mục đã cung cấp:\n{sections_text}\n"
@@ -112,7 +116,7 @@ class CompanyGatewayContentUnderstanding:
                 f"4. key_takeaways: 3-6 key points the audience should remember\n\n"
                 f"Title: {title}\n"
                 f"{source_kind_instruction}\n\n"
-                f"Source content:\n{text[:40_000]}\n"
+                f"Source content:\n{text[:max_input_chars]}\n"
             )
             if sections_text:
                 user += f"\nProvided sections:\n{sections_text}\n"

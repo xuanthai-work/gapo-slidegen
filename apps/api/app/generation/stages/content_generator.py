@@ -2,8 +2,10 @@
 slide schema JSON.
 """
 
+from typing import Mapping
+
+from ..models import SlideContent
 from ..provider import GenerationRequest
-from ..themes import THEMES
 from .models import StoryOutline
 from .native_content_generator import NativeContentGenerator
 from .presenton_content_generator import PresentonContentGenerator
@@ -19,8 +21,12 @@ __all__ = [
 
 
 def build_content_generator(theme_id: str) -> ContentGenerator:
-    """Return the renderer appropriate for the requested theme."""
-    if theme_id in THEMES:
+    """Return the renderer appropriate for the requested theme.
+
+    Modern Blue compiles the Presenton template. The other product themes keep
+    their native layouts so color, type, and composition actually change.
+    """
+    if theme_id == "modern-blue":
         return PresentonContentGenerator()
     return NativeContentGenerator()
 
@@ -36,14 +42,37 @@ class ThemeDispatchContentGenerator:
     ) -> NativeContentGenerator | PresentonContentGenerator:
         return build_content_generator(request.theme_id)
 
+    def render_slide(
+        self,
+        request: GenerationRequest,
+        outline: StoryOutline,
+        *,
+        index: int,
+        assets: Mapping[tuple[int, str], str],
+        contents: Mapping[str, SlideContent] | None = None,
+    ) -> dict[str, object]:
+        return self._delegate(request).render_slide(
+            request,
+            outline,
+            index=index,
+            assets=assets,
+            contents=contents,
+        )
+
     def render_slides(
         self,
         request: GenerationRequest,
         outline: StoryOutline,
         *,
         assets: dict[tuple[int, str], str],
+        contents: Mapping[str, SlideContent] | None = None,
     ) -> list[dict[str, object]]:
-        return self._delegate(request).render_slides(request, outline, assets=assets)
+        return self._delegate(request).render_slides(
+            request,
+            outline,
+            assets=assets,
+            contents=contents,
+        )
 
     def render(
         self,
@@ -51,5 +80,11 @@ class ThemeDispatchContentGenerator:
         outline: StoryOutline,
         *,
         assets: dict[tuple[int, str], str],
+        contents: Mapping[str, SlideContent] | None = None,
     ) -> dict[str, object]:
-        return self._delegate(request).render(request, outline, assets=assets)
+        return self._delegate(request).render(
+            request,
+            outline,
+            assets=assets,
+            contents=contents,
+        )

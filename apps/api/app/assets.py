@@ -1,8 +1,8 @@
-from typing import Annotated, Literal
-from uuid import UUID, uuid4
+from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -10,8 +10,8 @@ from .auth import get_current_user
 from .config import get_settings
 from .database import get_session
 from .generation.factory import build_image_provider
-from .generation.image_provider import ImageGenerationProvider, ImageGenerationRequest
-from .generation.provider import ProviderConfigurationError, ProviderError
+from .generation.image_provider import ImageGenerationProvider
+from .generation.provider import ProviderConfigurationError
 from .models import AssetRecord, User
 from .storage import LocalObjectStorage, ObjectStorage
 from .storage.assets import ALLOWED_IMAGE_TYPES, detect_image_type, store_asset
@@ -26,19 +26,6 @@ class AssetView(BaseModel):
     filename: str
     content_type: str
     size: int
-
-
-class GenerateImageInput(BaseModel):
-    prompt: str = Field(min_length=1, max_length=2_000)
-    aspect_ratio: Literal["1:1", "3:4", "4:3", "9:16", "16:9"] = "16:9"
-
-    @field_validator("prompt")
-    @classmethod
-    def validate_prompt(cls, value: str) -> str:
-        prompt = value.strip()
-        if not prompt:
-            raise ValueError("Image prompt cannot be empty.")
-        return prompt
 
 
 def get_asset_storage() -> ObjectStorage:
@@ -81,39 +68,15 @@ async def upload_asset(
     )
 
 
-@router.post("/generate", response_model=AssetView, status_code=status.HTTP_201_CREATED)
+@router.post("/generate", status_code=status.HTTP_410_GONE)
 def generate_asset(
-    payload: GenerateImageInput,
     user: Annotated[User, Depends(get_current_user)],
-    session: Annotated[Session, Depends(get_session)],
-    storage: Annotated[ObjectStorage, Depends(get_asset_storage)],
-    provider: Annotated[ImageGenerationProvider, Depends(get_image_provider)],
-) -> AssetRecord:
-    try:
-        generated = provider.generate_image(
-            ImageGenerationRequest(prompt=payload.prompt, aspect_ratio=payload.aspect_ratio)
-        )
-        limit = min(get_settings().max_upload_bytes, 10 * 1024 * 1024)
-        if not generated.data or len(generated.data) > limit:
-            raise ProviderError("The generated image is empty or exceeds 10 MB.")
-        detected_type = detect_image_type(generated.data)
-        if detected_type not in ALLOWED_IMAGE_TYPES:
-            raise ProviderError("The image provider returned an unsupported image format.")
-        extension = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}[detected_type]
-        return store_asset(
-            owner_id=user.id,
-            session=session,
-            storage=storage,
-            filename=f"generated-{uuid4().hex[:12]}.{extension}",
-            data=generated.data,
-        )
-    except ProviderConfigurationError as error:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(error),
-        ) from error
-    except ProviderError as error:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)) from error
+) -> None:
+    del user
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail="Text-to-image generation has been disabled.",
+    )
 
 
 @router.get("/{asset_id}/content")

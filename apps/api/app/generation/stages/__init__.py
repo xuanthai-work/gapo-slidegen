@@ -27,15 +27,30 @@ from .content_understanding import (
     StubContentUnderstanding,
     build_content_understanding,
 )
-from .orchestrator import GenerationPipeline
+from .content_writer import OutlineContentWriter, ProviderContentWriter
+from .deck_planner import OutlineDeckPlanner, ProviderDeckPlanner
+from .layout_selector import PresentonLayoutSelector
+from .orchestrator import GenerationPipeline, SlideValidationFailed
 from .protocols import (
     AssetGenerator,
     AssetPlanner,
     ContentGenerator,
     ContentUnderstanding,
+    ContentWriter,
+    DeckPlanner,
     LayoutSelector,
+    SlidePlanner,
+    SlideRepairer,
+    SlideValidator,
     StoryPlanner,
 )
+from .slide_repairer import DeterministicSlideRepairer
+from .slide_validator import (
+    RuleBasedSlideValidator,
+    SlideValidationIssue,
+    SlideValidationResult,
+)
+from .slide_planner import OutlineSlidePlanner, ProviderSlidePlanner
 
 __all__ = [
     "AssetGenerator",
@@ -49,6 +64,8 @@ __all__ = [
     "ContentGenerator",
     "ContentUnderstanding",
     "ContentUnderstandingResult",
+    "ContentWriter",
+    "DeckPlanner",
     "StubContentUnderstanding",
     "GeneratedAsset",
     "GenerationPipeline",
@@ -56,8 +73,23 @@ __all__ = [
     "NullAssetGenerator",
     "LayoutSelector",
     "NativeContentGenerator",
+    "OutlineContentWriter",
+    "OutlineDeckPlanner",
+    "OutlineSlidePlanner",
+    "ProviderDeckPlanner",
+    "ProviderContentWriter",
+    "ProviderSlidePlanner",
+    "PresentonLayoutSelector",
     "PresentonContentGenerator",
     "StoryOutline",
+    "SlideValidationFailed",
+    "SlideValidationIssue",
+    "SlideValidationResult",
+    "SlidePlanner",
+    "SlideRepairer",
+    "SlideValidator",
+    "DeterministicSlideRepairer",
+    "RuleBasedSlideValidator",
     "StubAssetPlanner",
     "ThemeDispatchContentGenerator",
     "StoryOutlineItem",

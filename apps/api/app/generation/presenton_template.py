@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Literal, Mapping
 from uuid import uuid4
 
+from .layouts.registry import ContentConstraints
 from .local_icon_registry import resolve_icon_for_context
 
 STAGE_WIDTH = 1280.0
@@ -104,19 +105,27 @@ ROLE_LAYOUT_CANDIDATES: dict[str, tuple[str, ...]] = {
     ),
 }
 
-DEFAULT_CONTENT_BUDGETS: dict[str, int] = {
-    "title_max_chars": 80,
-    "content_max_chars": 180,
-    "block_heading_max_chars": 55,
-    "block_body_max_chars": 120,
-}
-
 ROLE_CONTENT_BUDGETS: dict[str, dict[str, int]] = {
     "cover": {"title_max_chars": 72, "content_max_chars": 130},
     "quote": {"content_max_chars": 220, "block_body_max_chars": 220},
     "big-stat": {"block_heading_max_chars": 42, "block_body_max_chars": 72},
     "cta": {"title_max_chars": 64, "content_max_chars": 150},
     "summary": {"content_max_chars": 160, "block_body_max_chars": 100},
+}
+
+PRESENTON_LAYOUT_CONSTRAINTS: dict[str, ContentConstraints] = {
+    "title_slide": ContentConstraints(72, 130, 55, 120, 0),
+    "title_description_bullet_points_grid_with_icon": ContentConstraints(72, 160, 42, 90, 4),
+    "title_description_bullet_points_list_with_icon": ContentConstraints(72, 180, 42, 100, 6),
+    "title_description_chart": ContentConstraints(72, 160, 42, 90, 4),
+    "title_description_chart_table": ContentConstraints(72, 150, 40, 80, 4),
+    "title_description_image": ContentConstraints(72, 180, 48, 110, 3),
+    "title_list_of_cards_with_alternating_image": ContentConstraints(72, 150, 42, 90, 4),
+    "title_list_of_cards_with_image": ContentConstraints(72, 150, 42, 90, 6),
+    "title_image_description_list_with_highlighted_text_heading_description": ContentConstraints(
+        72, 150, 42, 72, 4
+    ),
+    "table_of_contents": ContentConstraints(72, 120, 48, 80, 8),
 }
 
 
@@ -198,12 +207,17 @@ def _normalize_slide_copy(text: str) -> str:
     return cleaned
 
 
-def _merge_budgets(role: str | None, budgets: dict[str, int] | None) -> dict[str, int]:
-    merged = dict(DEFAULT_CONTENT_BUDGETS)
-    if role:
-        merged.update(ROLE_CONTENT_BUDGETS.get(role, {}))
-    if budgets:
-        merged.update(budgets)
+def _merge_budgets(
+    constraints: ContentConstraints,
+    role: str | None,
+    budgets: dict[str, int] | None,
+) -> dict[str, int]:
+    merged = constraints.as_budget()
+    overrides = [ROLE_CONTENT_BUDGETS.get(role, {}) if role else {}, budgets or {}]
+    for override in overrides:
+        for field, limit in override.items():
+            if field in merged:
+                merged[field] = min(merged[field], limit)
     return merged
 
 class _ContentSlots:
@@ -216,6 +230,7 @@ class _ContentSlots:
         blocks: list[dict[str, object]] | None = None,
         role: str | None = None,
         budgets: dict[str, int] | None = None,
+        constraints: ContentConstraints,
     ) -> None:
         self.title = _normalize_slide_copy(title)
         self.content = _normalize_slide_copy(content)
@@ -225,7 +240,7 @@ class _ContentSlots:
         self.structured = blocks is not None
         self.blocks = blocks or []
         self.counts: dict[str, int] = {}
-        self.budgets = _merge_budgets(role, budgets)
+        self.budgets = _merge_budgets(constraints, role, budgets)
 
     def _respect_budget(self, text: str, field: str) -> str:
         limit = self.budgets.get(field)
@@ -234,11 +249,12 @@ class _ContentSlots:
         # Soft truncation: prefer whole words, but never exceed the limit.
         if len(text) <= limit:
             return text
-        truncated = text[:limit]
+        suffix = "..." if len(text) > 3 and limit >= 3 else ""
+        truncated = text[: limit - len(suffix)]
         last_space = truncated.rfind(" ")
-        if last_space > limit * 0.7:
+        if last_space > (limit - len(suffix)) * 0.7:
             truncated = truncated[:last_space]
-        return truncated.rstrip(" .,;:-") + "..." if len(text) > 3 else text[:limit]
+        return truncated.rstrip(" .,;:-") + suffix
 
     def _next(self, name: str) -> tuple[str, int]:
         index = self.counts.get(name, 0)
@@ -333,6 +349,16 @@ class PresentonTemplateAdapter:
     def layout_ids(self) -> tuple[str, ...]:
         return tuple(self.layouts)
 
+    def content_constraints(self, layout_id: str) -> ContentConstraints:
+        if layout_id not in self.layouts:
+            raise ValueError(f"Unknown Presenton layout: {layout_id}")
+        try:
+            return PRESENTON_LAYOUT_CONSTRAINTS[layout_id]
+        except KeyError as error:
+            raise ValueError(
+                f"Presenton layout {layout_id!r} has no content constraints"
+            ) from error
+
     def compile_slide(
         self,
         layout_id: str,
@@ -363,6 +389,7 @@ class PresentonTemplateAdapter:
             blocks=blocks,
             role=role,
             budgets=budgets,
+            constraints=self.content_constraints(layout_id),
         )
         self.slide_index = slide_index
         self.slide_count = slide_count
