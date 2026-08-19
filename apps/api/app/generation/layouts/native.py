@@ -167,17 +167,21 @@ def _cover_editorial(context: NativeLayoutContext) -> dict[str, object]:
 def _content_header(context: NativeLayoutContext) -> dict[str, object]:
     colors, fonts = context.colors, context.fonts
     text_color = colors["text"]
+    blocks = list(context.blocks[:3])
+    body_height = 80 if blocks else 350
     elements = [
         _text_element(_page_label(context), x=84, y=58, width=150, height=36, size=14, color=colors["primary"], family=fonts["body"], bold=True, letter_spacing=1.5, name="Page number"),
         _text_element(context.title, x=84, y=116, width=1070, height=118, size=_title_font_size(context.title, 42), color=text_color, family=fonts["heading"], bold=True, line_height=1.06, name="Title"),
         _shape(x=84, y=252, width=1110, height=2, color=colors["primary"], name="Header rule"),
         _shape(x=84, y=286, width=12, height=334, color=colors["accent"], radius=6, name="Accent rail"),
-        _text_element(context.body, x=132, y=286, width=1010, height=350, size=_body_font_size(context.body), color=text_color, family=fonts["body"], line_height=1.32, name="Body"),
     ]
-    for block_index, block in enumerate(context.blocks[:3]):
+    if context.body:
+        elements.append(_text_element(context.body, x=132, y=286, width=1010, height=body_height, size=_body_font_size(context.body), color=text_color, family=fonts["body"], line_height=1.32, name="Body"))
+    block_top = 286 + body_height + 16 if context.body else 286
+    for block_index, block in enumerate(blocks):
         heading = str(block.get("heading") or "").strip()
         body = str(block.get("body") or "").strip()
-        y_base = 286 + (block_index + 1) * 110
+        y_base = block_top + block_index * 110
         if heading:
             elements.append(_text_element(heading, x=132, y=y_base, width=1010, height=28, size=18, color=text_color, family=fonts["heading"], bold=True, line_height=1.1, name=f"Block {block_index + 1} heading"))
         if body:
