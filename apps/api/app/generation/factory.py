@@ -23,6 +23,15 @@ from .stub_provider import StubPresentationProvider
 logger = logging.getLogger(__name__)
 
 
+def _resolve_repo_root() -> Path:
+    """Locate the monorepo root (contains packages/slide-rasterizer when built)."""
+    start = Path(__file__).resolve().parent
+    for parent in (start, *start.parents):
+        if (parent / "packages" / "slide-rasterizer").is_dir():
+            return parent
+    return Path(__file__).resolve().parents[3]
+
+
 # Legacy Gemini provider is kept as a disabled fallback. To re-enable, import
 # GoogleAIStudioProvider from .gemini_provider and add the branch below.
 # from .gemini_provider import GoogleAIStudioProvider
@@ -97,7 +106,7 @@ def _build_visual_stages(settings, story_planner_name: str):
     )
     rasterizer = CliSlideRasterizer(
         command=settings.visual_gate_rasterizer_cmd,
-        repo_root=Path.cwd(),
+        repo_root=_resolve_repo_root(),
         save_screenshots=settings.visual_gate_save_screenshots,
         storage_root=settings.storage_root,
     )
