@@ -136,6 +136,8 @@ class ClaimedGeneration:
     language: str
     source_kind: str
     theme_id: str
+    template_id: str
+    color_scheme_id: str
 
 
 class NullEventPublisher:
@@ -214,7 +216,9 @@ class GenerationWorker:
                 ),
                 language=str(job.payload.get("language", "en")),
                 source_kind=source.kind if source else "outline",
-                theme_id=str(job.payload.get("theme_id", "modern-blue")),
+                theme_id=str(job.payload.get("theme_id", "modern:professional-blue")),
+                template_id=str(job.payload.get("template_id", "modern")),
+                color_scheme_id=str(job.payload.get("color_scheme_id", "professional-blue")),
             )
             session.commit()
             return claimed
@@ -296,6 +300,8 @@ class GenerationWorker:
             slide_count=claimed.slide_count,
             source_kind=claimed.source_kind,
             theme_id=claimed.theme_id,
+            template_id=claimed.template_id,
+            color_scheme_id=claimed.color_scheme_id,
         )
         try:
             logger.info("[worker] generating outline for job %s", claimed.job_id)

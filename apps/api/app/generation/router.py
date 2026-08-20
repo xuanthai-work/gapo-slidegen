@@ -46,6 +46,10 @@ from .provider import (
     RewriteTextItem,
     SlideRewriteRequest,
 )
+from .themes import (
+    DEFAULT_COLOR_SCHEME_ID,
+    DEFAULT_TEMPLATE_ID,
+)
 from .validation import InvalidPresentationDocument, validate_presentation_document
 
 router = APIRouter(tags=["generation"])
@@ -56,12 +60,23 @@ class GenerationInput(BaseModel):
     source_id: UUID | None = None
     outline_id: UUID | None = None
     language: str = Field(default="en", min_length=2, max_length=32)
-    theme_id: Literal[
-        "modern-blue",
-        "editorial-cobalt",
-        "warm-studio",
-        "midnight-signal",
-    ] = "modern-blue"
+    template_id: Literal[
+        "modern",
+        "editorial",
+        "executive",
+        "swift",
+        "standard",
+        "momentum",
+        "general",
+        "dynamic",
+    ] = DEFAULT_TEMPLATE_ID
+    color_scheme_id: Literal[
+        "edge-yellow",
+        "light-rose",
+        "mint-blue",
+        "professional-blue",
+        "professional-dark",
+    ] = DEFAULT_COLOR_SCHEME_ID
 
 
 class JobView(BaseModel):
@@ -391,13 +406,15 @@ def request_generation(
             return service.enqueue_outline(
                 user=user,
                 outline_id=payload.outline_id,
-                theme_id=payload.theme_id,
+                template_id=payload.template_id,
+                color_scheme_id=payload.color_scheme_id,
             )
         return service.enqueue(
             user=user,
             source_id=payload.source_id,
             language=payload.language,
-            theme_id=payload.theme_id,
+            template_id=payload.template_id,
+            color_scheme_id=payload.color_scheme_id,
         )
     except SourceNotFound as error:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error

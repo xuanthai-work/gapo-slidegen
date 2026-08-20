@@ -388,6 +388,8 @@ def test_worker_retries_incomplete_remainder_under_a_new_attempt() -> None:
         language="en",
         source_kind="prompt",
         theme_id="modern-blue",
+        template_id="modern",
+        color_scheme_id="professional-blue",
     )
     request = GenerationRequest(
         presentation_id=uuid4(),

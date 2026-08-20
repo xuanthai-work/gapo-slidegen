@@ -218,6 +218,11 @@ class TaggedDeckStreamParser:
             slot == "items" or slot.startswith("items.")
         ) and _ITEM_SLOT_PATTERN.fullmatch(slot) is None:
             raise DeckStreamError(f"Malformed item slot {slot!r}")
+        if (
+            slot == self._current_layout
+            and self._slot_index < len(self._expected_slots)
+        ):
+            slot = self._expected_slots[self._slot_index]
         if slot not in self._expected_slots:
             raise DeckStreamError(
                 f"Unknown slot {slot!r} for layout {self._current_layout!r}"

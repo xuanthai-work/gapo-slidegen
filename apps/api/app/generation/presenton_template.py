@@ -128,10 +128,44 @@ PRESENTON_LAYOUT_CONSTRAINTS: dict[str, ContentConstraints] = {
     ),
     "table_of_contents": ContentConstraints(72, 180, 60, 160, 8),
 }
+DEFAULT_LAYOUT_CONSTRAINTS = ContentConstraints(72, 240, 60, 180, 4)
+COVER_LAYOUT_CONSTRAINTS = ContentConstraints(72, 200, 55, 160, 0)
+INDEX_LAYOUT_CONSTRAINTS = ContentConstraints(72, 180, 60, 160, 8)
+
+
+def is_cover_layout(layout_id: str) -> bool:
+    name = layout_id.lower()
+    if "cover" in name or name in {"title_slide", "title_intro"}:
+        return True
+    if name.startswith("title_slide") or name.startswith("centered_title_metadata"):
+        return True
+    return False
+
+
+def is_auto_excluded_layout(layout_id: str) -> bool:
+    name = layout_id.lower()
+    if "table_of_contents" in name or "index_grid" in name:
+        return False
+    return any(token in name for token in ("chart", "table", "gauge", "donut"))
 
 
 def _layout_shape(layout_id: str) -> LayoutShape:
-    return LAYOUT_SHAPES.get(layout_id, "text_only")
+    if layout_id in LAYOUT_SHAPES:
+        return LAYOUT_SHAPES[layout_id]
+    name = layout_id.lower()
+    if is_cover_layout(layout_id):
+        return "cover"
+    if "table_of_contents" in name or "index_grid" in name or "agenda" in name:
+        return "index_grid"
+    if "metric" in name:
+        return "metric_stack"
+    if "grid" in name or "card" in name:
+        return "grid_cards"
+    if "list" in name or "bullet" in name:
+        return "two_column_text"
+    if any(token in name for token in ("image", "photo", "visual", "media")):
+        return "text_with_media"
+    return "text_only"
 
 
 def _has_media_slot(layout_id: str) -> bool:
@@ -221,6 +255,178 @@ def _merge_budgets(
                 merged[field] = min(merged[field], limit)
     return merged
 
+
+_ITEM_NAME_MARKERS = (
+    "card_",
+    "item_",
+    "callout_",
+    "step_",
+    "milestone_",
+    "column_",
+    "row_",
+    "feature_",
+    "entry_",
+    "panel_",
+    "profile_",
+    "person_",
+    "plan_",
+    "stage_",
+    "metric_",
+    "review_",
+    "agenda_",
+    "section_",
+    "timeline_",
+    "note_",
+    "list_item",
+    "detail_",
+    "stacked_",
+    "upper_text",
+    "lower_text",
+    "upper_card",
+    "lower_card",
+    "left_callout",
+    "right_callout",
+    "table_",
+    "first_row",
+    "second_row",
+    "third_row",
+    "fourth_row",
+    "gauge_",
+    "year_label",
+    "duration_",
+    "inner_metric",
+    "middle_metric",
+    "outer_metric",
+    "large_metric",
+    "lower_metric",
+)
+_PAGE_NAME_MARKERS = (
+    "page_number",
+    "page_marker",
+    "page_folio",
+    "page_label",
+    "footer_page",
+    "footer_slide",
+    "footer_number",
+    "footer_value",
+    "footer_index",
+    "pagination",
+    "footer_marker",
+)
+_SLIDE_TITLE_TOKENS = ("title", "heading", "headline", "header_text", "header_title")
+_SLIDE_BODY_TOKENS = (
+    "subtitle",
+    "supporting",
+    "description",
+    "paragraph",
+    "body_copy",
+    "body_paragraph",
+    "body_text",
+    "intro_description",
+    "intro_paragraph",
+    "intro_text",
+    "intro_summary",
+    "intro_statement",
+    "intro_subtitle",
+    "tagline",
+    "summary",
+    "caption_primary",
+    "cover_subtitle",
+    "slide_intro",
+    "stack_body",
+)
+
+
+def _name_has(name: str, markers: tuple[str, ...]) -> bool:
+    return any(marker in name for marker in markers)
+
+
+_SLIDE_LEVEL_EXCLUSIONS = (
+    "section_heading",
+    "section_title",
+    "section_header",
+    "section_kicker",
+)
+_ITEM_HEADING_MARKERS = (
+    "card_title",
+    "entry_title",
+    "item_title",
+    "feature_title",
+    "point_title",
+    "callout_title",
+    "step_title",
+    "metric_label",
+    "upper_text_heading",
+    "lower_text_heading",
+)
+
+
+def _is_slide_level_name(name: str) -> bool:
+    return _name_has(name, _SLIDE_LEVEL_EXCLUSIONS)
+
+
+def _is_item_name(name: str) -> bool:
+    if _is_slide_level_name(name):
+        return False
+    return _name_has(name, _ITEM_NAME_MARKERS)
+
+
+def _is_item_heading_name(name: str) -> bool:
+    if not _is_item_name(name):
+        return False
+    if _name_has(name, _ITEM_HEADING_MARKERS):
+        return True
+    if any(token in name for token in ("description", "caption", "body", "subtitle")):
+        return False
+    return any(token in name for token in ("title", "heading"))
+
+
+def _is_page_name(name: str) -> bool:
+    return _name_has(name, _PAGE_NAME_MARKERS)
+
+
+def _is_slide_title_name(name: str) -> bool:
+    if _is_page_name(name):
+        return False
+    if _is_slide_level_name(name):
+        return True
+    if _is_item_name(name):
+        return False
+    if any(token in name for token in ("subtitle", "supporting", "tagline", "caption")):
+        return False
+    return any(token in name for token in _SLIDE_TITLE_TOKENS)
+
+
+def _is_slide_body_name(name: str) -> bool:
+    if _is_item_name(name) or _is_page_name(name) or _is_slide_title_name(name):
+        return False
+    return any(token in name for token in _SLIDE_BODY_TOKENS)
+
+
+def _iter_text_names(node: object) -> list[str]:
+    names: list[str] = []
+    if isinstance(node, dict):
+        if node.get("type") == "text" and node.get("name"):
+            names.append(str(node["name"]))
+        for value in node.values():
+            names.extend(_iter_text_names(value))
+    elif isinstance(node, list):
+        for value in node:
+            names.extend(_iter_text_names(value))
+    return names
+
+
+def _child_has_item_text(node: dict[str, Any]) -> bool:
+    return any(_is_item_heading_name(_normalized_name(name)) for name in _iter_text_names(node))
+
+
+def _is_small_icon_slot(name: str, width: float, height: float) -> bool:
+    normalized = _normalized_name(name)
+    if any(token in normalized for token in ("icon", "avatar", "favicon")):
+        return True
+    return max(width, height) <= 96.0
+
+
 class _ContentSlots:
     def __init__(
         self,
@@ -232,6 +438,7 @@ class _ContentSlots:
         role: str | None = None,
         budgets: dict[str, int] | None = None,
         constraints: ContentConstraints,
+        slide_index: int = 0,
     ) -> None:
         self.title = _normalize_slide_copy(title)
         self.content = _normalize_slide_copy(content)
@@ -242,6 +449,7 @@ class _ContentSlots:
         self.blocks = blocks or []
         self.counts: dict[str, int] = {}
         self.budgets = _merge_budgets(constraints, role, budgets)
+        self.slide_index = slide_index
 
     def _respect_budget(self, text: str, field: str) -> str:
         limit = self.budgets.get(field)
@@ -258,12 +466,22 @@ class _ContentSlots:
             index = index * 2 + 1
         return self.points[index % len(self.points)], index
 
+    def _page_label(self) -> str:
+        return f"{self.slide_index + 1:02d}"
+
+    @staticmethod
+    def _drop_template_copy(original: str) -> str:
+        stripped = original.strip()
+        if len(stripped) <= 2:
+            return original
+        return ""
+
     def text(self, name_value: object, original: str) -> str:
         name = _normalized_name(name_value)
         if self.cover:
-            if name == "primary_heading":
+            if _is_slide_title_name(name):
                 return self._respect_budget(self.title, "title_max_chars")
-            if name == "supporting_paragraph":
+            if _is_slide_body_name(name):
                 return self._respect_budget(self.content, "content_max_chars")
             if name == "badge_initials":
                 return "AI"
@@ -271,19 +489,15 @@ class _ContentSlots:
                 return "Internal presentation"
             if name == "card_secondary_text":
                 return "Generated workspace"
-            return original
+            if _is_page_name(name):
+                return self._page_label()
+            return self._drop_template_copy(original)
 
-        title_slots = {
-            "primary_heading",
-            "large_heading",
-            "section_heading",
-            "main_heading",
-            "stack_heading",
-            "header_text",
-        }
-        if name in title_slots:
+        if _is_page_name(name):
+            return self._page_label()
+        if _is_slide_title_name(name):
             return self._respect_budget(self.title, "title_max_chars")
-        if name in {"supporting_paragraph", "body_paragraph", "intro_paragraph", "stack_body"}:
+        if _is_slide_body_name(name):
             return self._respect_budget(self.content, "content_max_chars")
         point, index = self._next(name)
         block = self.blocks[index] if index < len(self.blocks) else {}
@@ -293,6 +507,8 @@ class _ContentSlots:
         block_value = str(block.get("value") or "").strip()
         heading, description = _card_copy(point)
         if any(token in name for token in ("number", "badge")):
+            if self.structured and index >= len(self.blocks):
+                return ""
             return str(index + 1).zfill(2)
         if "metric_label" in name:
             return self._respect_budget(
@@ -314,10 +530,14 @@ class _ContentSlots:
                 block_heading or ("" if self.structured else heading or point),
                 "block_heading_max_chars",
             )
-        return original
+        return self._drop_template_copy(original)
+
+    def item_slots_used(self) -> int:
+        counts = [count for name, count in self.counts.items() if _is_item_heading_name(name)]
+        return max(counts) if counts else 0
 
 
-@lru_cache(maxsize=4)
+@lru_cache(maxsize=16)
 def _load_template(path: str) -> dict[str, Any]:
     with Path(path).open(encoding="utf-8") as template_file:
         template = json.load(template_file)
@@ -345,12 +565,14 @@ class PresentonTemplateAdapter:
     def content_constraints(self, layout_id: str) -> ContentConstraints:
         if layout_id not in self.layouts:
             raise ValueError(f"Unknown Presenton layout: {layout_id}")
-        try:
+        if layout_id in PRESENTON_LAYOUT_CONSTRAINTS:
             return PRESENTON_LAYOUT_CONSTRAINTS[layout_id]
-        except KeyError as error:
-            raise ValueError(
-                f"Presenton layout {layout_id!r} has no content constraints"
-            ) from error
+        if is_cover_layout(layout_id):
+            return COVER_LAYOUT_CONSTRAINTS
+        name = layout_id.lower()
+        if "table_of_contents" in name or "index_grid" in name or "agenda" in name:
+            return INDEX_LAYOUT_CONSTRAINTS
+        return DEFAULT_LAYOUT_CONSTRAINTS
 
     def compile_slide(
         self,
@@ -378,11 +600,12 @@ class PresentonTemplateAdapter:
         self.slots = _ContentSlots(
             title,
             content,
-            cover=layout_id == "title_slide",
+            cover=is_cover_layout(layout_id) or slide_index == 0,
             blocks=blocks,
             role=role,
             budgets=budgets,
             constraints=self.content_constraints(layout_id),
+            slide_index=slide_index,
         )
         self.slide_index = slide_index
         self.slide_count = slide_count
@@ -564,6 +787,8 @@ class PresentonTemplateAdapter:
                 )
                 self.elements.append(base)
                 return
+            if not _is_small_icon_slot(slot_name, width, height):
+                return
             icon_svg = self._fallback_icon_svg(slot_name)
             if icon_svg:
                 base.update(
@@ -577,20 +802,6 @@ class PresentonTemplateAdapter:
                 )
                 self.elements.append(base)
                 return
-            radius = source.get("border_radius")
-            radius_values = radius.values() if isinstance(radius, dict) else []
-            base.update(
-                {
-                    "type": "shape",
-                    "shape": "rectangle",
-                    "fill": {"color": "#F5F8FE", "opacity": 1},
-                    "stroke": {"color": "#DCE5F5", "width": 1, "opacity": 1},
-                    "cornerRadius": max((_number(value) for value in radius_values), default=4),
-                    "decorative": False,
-                    "name": str(source.get("name") or "Image placeholder"),
-                }
-            )
-            self.elements.append(base)
             return
 
         if element_type == "container":
@@ -669,6 +880,18 @@ class PresentonTemplateAdapter:
         children = [child for child in source.get("children", []) if isinstance(child, dict)]
         if not children:
             return
+        if self.slots.structured:
+            remaining = max(0, len(self.slots.blocks) - self.slots.item_slots_used())
+            kept: list[dict[str, Any]] = []
+            for child in children:
+                if _child_has_item_text(child):
+                    if remaining <= 0:
+                        continue
+                    remaining -= 1
+                kept.append(child)
+            children = kept
+            if not children:
+                return
         top, right, bottom, left = _padding(source.get("padding"))
         inner_x, inner_y = x + left, y + top
         inner_width = max(0, width - left - right)

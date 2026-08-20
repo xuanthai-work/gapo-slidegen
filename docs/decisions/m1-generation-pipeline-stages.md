@@ -92,11 +92,13 @@ Current implementation: `ProviderSlidePlanner` wrapping `plan_slide`, with
 
 ### 6. Layout selection
 
-Choose the final layout implementation for each slide purpose. Modern Blue maps
-to Presenton template ids; other themes map to native archetypes in
-`apps/api/app/generation/layouts/native.py`.
+Choose the final layout implementation for each slide purpose. The selected
+Presenton template supplies layout ids; the color scheme is applied after
+compile.
 
-Current implementation: `ThemeDispatchLayoutSelector`.
+Current implementation: `ThemeDispatchLayoutSelector`, which always loads the
+Presenton pack named in `theme_id` (`template:scheme`). Native selectors remain
+only so older stored decks can still open.
 
 ### 7. Content generation
 
@@ -104,8 +106,8 @@ Fill the selected layout with finished text and shape elements according to the
 outline copy. The result is still semantic: text runs, lists, and placeholder
 shapes with logical positions, not final pixel coordinates.
 
-Current implementation: `PresentonContentGenerator` and `NativeContentGenerator`
-in `apps/api/app/generation/stages/content_generator.py`.
+Current implementation: `PresentonContentGenerator` for every new job.
+`NativeContentGenerator` remains for previously stored native decks.
 
 ### 8. Asset planning
 
@@ -150,15 +152,15 @@ Current implementations: web editor canvas, present mode, and
 
 | Stage | Current location | Notes |
 |---|---|---|
-| User Prompt / Document | `apps/web/src/app/dashboard.tsx` | One-click flow today. |
+| User Prompt / Document | `apps/web/src/app/dashboard.tsx` | Generate opens template then color HUD. |
 | Document normalization | `apps/api/app/ingestion.py` + `extract_document()` | Returns `SourceDocument`. |
 | Content understanding | `apps/api/app/generation/stages/content_understanding.py` | One LLM call when the planner has `_chat`. |
 | Story / Outline | `CompanyGatewayProvider.generate_outline` + `outline_schema.py` | Persisted outline records exist; web does not review them. |
 | Deck planning | `ProviderDeckPlanner` / `plan_deck` | Narrative arc + per-slide role/goal. |
 | Slide planning | `ProviderSlidePlanner` / `plan_slide` | One LLM call per slide: density, structure, archetype. |
-| Layout selection | `ThemeDispatchLayoutSelector` | Presenton vs native by `theme_id`. No LLM. |
-| Content writing | `ProviderContentWriter` or `stream_deck_content` | One batch JSON call or one tagged stream. |
-| Content generation | `ThemeDispatchContentGenerator` | Compiles layout geometry. |
+| Layout selection | `ThemeDispatchLayoutSelector` | Presenton pack from `theme_id`. No LLM. |
+| Content writing | `ProviderContentWriter` or `stream_deck_content` | One batch JSON call or one tagged stream. Slot names only; not layout ids. |
+| Content generation | `ThemeDispatchContentGenerator` | Always Presenton compile + `apply_color_scheme`. |
 | Asset planning | `NullAssetPlanner` | No-op. |
 | Asset generation | `NullAssetGenerator` | No-op. |
 | Validate / repair | `RuleBasedSlideValidator` + `DeterministicSlideRepairer` | Bounds, overlap, min font — not visual quality. |
@@ -179,10 +181,11 @@ Current implementations: web editor canvas, present mode, and
 These are not a committed roadmap. Current progress is not necessarily the
 right long-term direction.
 
-- Layout inventory is small (Presenton templates + nine native layouts). Visual
-  sameness is more likely a geometry problem than a missing LLM stage.
-- Deck/slide plan already carries `density` and `preferred_archetype`; the
-  selector has few layouts to honor them.
+- Eight Presenton packs × five schemes is the live inventory. Native layouts
+  remain only for older stored decks. Visual mess is more often slot mapping or
+  recolor contrast than a missing LLM stage.
+- Deck/slide plan already carries `density` and `preferred_archetype`; each pack
+  still has a modest set of auto-selectable layouts.
 - Asset planning/generation code exists but is unwired.
 - Rule-based validation does not score visual quality. A VLM critic would need
   screenshots, a vision model, and alternative layouts to repair into.

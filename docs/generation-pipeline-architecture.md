@@ -61,25 +61,24 @@ copy come from the **same** layout that will compile.
 
 ```mermaid
 flowchart TD
-  Theme{"theme_id"}
-  Theme -->|"modern-blue"| PresentonSel["PresentonLayoutSelector"]
-  Theme -->|"warm-studio / editorial-cobalt / midnight-signal"| NativeSel["NativeLayoutSelector"]
+  Theme{"theme_id = template:scheme"}
+  Theme --> PresentonSel["PresentonLayoutSelector<br/>for that template.json"]
   PresentonSel --> LayoutId["item.layout_id + ContentConstraints"]
-  NativeSel --> LayoutId
   LayoutId --> Copy["Write copy into named slots<br/>title, body, items.*"]
-  Copy --> Theme2{"theme_id"}
-  Theme2 -->|"modern-blue"| PresentonGen["PresentonContentGenerator"]
-  Theme2 -->|"native themes"| NativeGen["NativeContentGenerator"]
-  PresentonGen --> SlideJSON["Canonical slide JSON"]
-  NativeGen --> SlideJSON
+  Copy --> PresentonGen["PresentonContentGenerator"]
+  PresentonGen --> Recolor["apply_color_scheme"]
+  Recolor --> SlideJSON["Canonical slide JSON"]
   SlideJSON --> Validator["RuleBasedSlideValidator"]
   Validator -->|invalid| Repairer["DeterministicSlideRepairer"]
   Repairer --> Validator
   Validator -->|valid| Done["Slide accepted"]
 ```
 
-Native slides with **2+ story blocks** select `content-header` so item slots
-are actually rendered. Quote / big-stat stay on `content-statement`.
+New generation always compiles a Presenton layout pack (`modern`, `editorial`,
+`executive`, `swift`, `standard`, `momentum`, `general`, `dynamic`) and then
+recolors it with one of five schemes. Native layout modules remain in the tree
+so older stored decks can still open in the editor. Chart and table layouts
+remain excluded from automatic selection.
 
 ## Write copy
 
@@ -150,11 +149,21 @@ overflow. Cover body is ~200 characters; list/grid item bodies ~160–180.
 
 ## Layout inventory
 
-Modern Blue compiles Presenton templates (title slide, grid, list, image,
-cards, metrics, TOC). Native themes use nine product-owned layouts (`cover-*`,
-`content-band|frame|header|margin|split|statement`). Most content layouts are
-the same family: title + body + 0–3 items. Selector diversity and new
-geometries are open product questions, not current pipeline stages.
+New generation compiles one of eight Presenton layout packs (modern, editorial,
+executive, swift, standard, momentum, general, dynamic) then recolors with a
+scheme. Native layout modules remain only so older stored decks can still open.
+
+Compile maps story copy into named slots (`title`, `body`, `card_title`,
+`section_heading`, …). Slide-level headings are not treated as cards. Extra
+item children beyond the structured blocks are omitted. Large image slots
+without an asset are omitted; small icon wells may keep a local SVG.
+
+`apply_color_scheme` then recolors fills and picks text color by contrast
+against the surface behind the text, so light template copy does not stay
+white on a light scheme.
+
+Stream copy must emit slot names only. If the model repeats a layout id as a
+`[[SLOT]]` name, the parser aliases it to the next expected slot.
 
 Rule-based validation after compile checks canvas bounds, overlap, and
 minimum font size. There is no screenshot or VLM critic.

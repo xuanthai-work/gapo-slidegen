@@ -1,24 +1,23 @@
+from pathlib import Path
 from typing import Mapping
 
-from ..presenton_template import (
-    PresentonTemplateAdapter,
-)
+from ..presenton_template import PresentonTemplateAdapter
 from ..models import SlideContent
 from ..provider import GenerationRequest
-from ..themes import get_theme
+from ..themes import apply_color_scheme, get_theme, template_path_for
 from .layout_selector import PresentonLayoutSelector
 from .models import StoryOutline, StoryOutlineItem
 
 
 class PresentonContentGenerator:
-    """Renders the Modern Blue theme by compiling the pinned Presenton template."""
+    """Renders a Presenton template, then applies the selected color scheme."""
 
     name = "presenton"
 
-    def __init__(self, template_path: str | None = None) -> None:
-        self.adapter = PresentonTemplateAdapter()
+    def __init__(self, template_id: str = "modern", template_path: str | Path | None = None) -> None:
+        path = Path(template_path) if template_path else template_path_for(template_id)
+        self.adapter = PresentonTemplateAdapter(path)
         self.layout_selector = PresentonLayoutSelector(self.adapter)
-        del template_path  # reserved for future template selection
 
     def _build_slide(
         self,
@@ -30,7 +29,7 @@ class PresentonContentGenerator:
         assets: Mapping[tuple[int, str], str],
         contents: Mapping[str, SlideContent] | None,
     ) -> dict[str, object]:
-        layout_id = self.layout_selector.select(
+        layout_id = item.layout_id or self.layout_selector.select(
             item,
             index=index,
             theme_id=request.theme_id,
@@ -44,7 +43,7 @@ class PresentonContentGenerator:
             if isinstance(slot_items, list)
             else item.blocks or None
         )
-        return self.adapter.compile_slide(
+        slide = self.adapter.compile_slide(
             layout_id,
             title=written.title if written else item.title or (
                 request.title if index == 0 else f"Key point {index}"
@@ -57,6 +56,7 @@ class PresentonContentGenerator:
             role=item.role,
             budgets=item.content_budget,
         )
+        return apply_color_scheme(slide, get_theme(request.theme_id))
 
     def render_slide(
         self,

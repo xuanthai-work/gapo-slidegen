@@ -4,7 +4,6 @@ from typing import Mapping
 from ..layouts import ContentConstraints, NativeLayoutRegistry, build_native_layout_registry
 from ..models import SlidePlan
 from ..presenton_template import (
-    MODERN_CONTENT_LAYOUT_IDS,
     MODERN_STORY_LAYOUTS,
     ROLE_LAYOUT_CANDIDATES,
     PresentonTemplateAdapter,
@@ -12,6 +11,8 @@ from ..presenton_template import (
     _has_metric_slots,
     _is_card_grid,
     _layout_shape,
+    is_auto_excluded_layout,
+    is_cover_layout,
 )
 from .models import StoryOutlineItem
 
@@ -86,14 +87,18 @@ class PresentonLayoutSelector:
         has_semantic_guidance = bool(
             plan or item.layout_id or item.layout or item.role or block_count
         )
+        cover_layout = self._cover_layout_id()
+        content_layouts = self._content_layout_ids(cover_layout)
         fallback_layout = (
-            MODERN_CONTENT_LAYOUT_IDS[(index - 1) % len(MODERN_CONTENT_LAYOUT_IDS)]
-            if index > 0
-            else "title_slide"
+            content_layouts[(index - 1) % len(content_layouts)]
+            if index > 0 and content_layouts
+            else cover_layout
         )
         ranking: list[LayoutCandidateScore] = []
 
         for layout_id in self.adapter.layout_ids:
+            if is_auto_excluded_layout(layout_id) and layout_id != item.layout_id:
+                continue
             score = 0.0
             reasons: list[str] = []
             constraints = self.content_constraints(layout_id)
@@ -111,7 +116,7 @@ class PresentonLayoutSelector:
                 score += 300 - role_candidates.index(layout_id) * 20
                 reasons.append("role-match")
 
-            if layout_id == "title_slide":
+            if layout_id == cover_layout or is_cover_layout(layout_id):
                 if index == 0:
                     score += 500
                     reasons.append("first-slide")
@@ -193,6 +198,8 @@ class PresentonLayoutSelector:
                 )
             )
 
+        if not ranking:
+            return [LayoutCandidateScore(cover_layout, 0.0, ("empty-fallback",))]
         return sorted(ranking, key=lambda candidate: candidate.score, reverse=True)
 
     def content_constraints(self, layout_id: str) -> ContentConstraints:
@@ -200,6 +207,19 @@ class PresentonLayoutSelector:
 
     def _layout_exists(self, layout_id: str) -> bool:
         return layout_id in self.adapter.layout_ids
+
+    def _cover_layout_id(self) -> str:
+        for layout_id in self.adapter.layout_ids:
+            if is_cover_layout(layout_id):
+                return layout_id
+        return self.adapter.layout_ids[0]
+
+    def _content_layout_ids(self, cover_layout: str) -> tuple[str, ...]:
+        return tuple(
+            layout_id
+            for layout_id in self.adapter.layout_ids
+            if layout_id != cover_layout and not is_auto_excluded_layout(layout_id)
+        )
 
     @classmethod
     def _has_visual_fallback(cls, item: StoryOutlineItem) -> bool:
@@ -285,7 +305,7 @@ class NativeLayoutSelector:
 
 
 class ThemeDispatchLayoutSelector:
-    """Chooses Presenton layouts for Modern Blue and native layouts otherwise."""
+    """Chooses Presenton layouts from the template named in theme_id."""
 
     name = "dispatch"
 
@@ -295,8 +315,11 @@ class ThemeDispatchLayoutSelector:
         presenton: PresentonLayoutSelector | None = None,
         native: NativeLayoutSelector | None = None,
     ) -> None:
+        self._fixed = presenton is not None
         self._presenton = presenton or PresentonLayoutSelector()
         self._native = native or NativeLayoutSelector()
+        self._by_template: dict[str, PresentonLayoutSelector] = {}
+        self._last: PresentonLayoutSelector | None = None
 
     def select(
         self,
@@ -318,9 +341,28 @@ class ThemeDispatchLayoutSelector:
     def content_constraints(self, layout_id: str) -> ContentConstraints:
         if layout_id in self._native.registry.layout_ids:
             return self._native.content_constraints(layout_id)
+        candidates = [self._last, self._presenton, *self._by_template.values()]
+        for selector in candidates:
+            if selector is not None and layout_id in selector.adapter.layout_ids:
+                return selector.content_constraints(layout_id)
         return self._presenton.content_constraints(layout_id)
 
-    def _delegate(self, theme_id: str) -> PresentonLayoutSelector | NativeLayoutSelector:
-        if theme_id == "modern-blue":
+    def _delegate(self, theme_id: str) -> PresentonLayoutSelector:
+        if self._fixed:
+            self._last = self._presenton
             return self._presenton
-        return self._native
+        from ..themes import parse_theme_ref, template_path_for
+
+        template_id, _scheme = parse_theme_ref(theme_id)
+        selector = self._by_template.get(template_id)
+        if selector is None:
+            selector = (
+                self._presenton
+                if template_id == "modern"
+                else PresentonLayoutSelector(
+                    PresentonTemplateAdapter(template_path_for(template_id))
+                )
+            )
+            self._by_template[template_id] = selector
+        self._last = selector
+        return selector

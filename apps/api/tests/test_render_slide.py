@@ -27,7 +27,7 @@ def _outline() -> StoryOutline:
                 id="point-1",
                 title="Point",
                 content="Body copy",
-                layout_id="title_with_text",
+                layout_id="title_description_image",
             ),
         ]
     )
@@ -40,7 +40,7 @@ def test_presenton_render_slide_compiles_one_item_independently() -> None:
         "point-1": SlideContent(
             slide_id="point-1",
             title="Point",
-            layout_id="title_with_text",
+            layout_id="title_description_image",
             slots={"body": "Body copy"},
         )
     }

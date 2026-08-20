@@ -323,7 +323,7 @@ class CompanyGatewayProvider:
                 raise ProviderResponseError(
                     f"Missing tagged stream configuration for slide {slide.id!r}."
                 ) from error
-            slide_lines.append(f"{slide.id} | {layout_id} | {', '.join(slots)}")
+            slide_lines.append(f"{slide.id} | {', '.join(slots)}")
 
         outline_payload = [
             {
@@ -350,7 +350,8 @@ class CompanyGatewayProvider:
         return (
             f"Write the complete presentation in language code {language!r} as one tagged stream.\n"
             "Emit every slide exactly once in the exact order below. For each slide, emit every "
-            "slot exactly once in the listed order:\n"
+            "slot exactly once in the listed order. The first column is the SLIDE id. After the "
+            "pipe are SLOT names only. Do not emit layout ids as SLOT names:\n"
             + "\n".join(slide_lines)
             + "\nUse only this grammar, with the exact IDs and slot names shown above:\n"
             "[[SLIDE <id>]][[SLOT <name>]]content[[/SLOT]]...[[/SLIDE]]\n"

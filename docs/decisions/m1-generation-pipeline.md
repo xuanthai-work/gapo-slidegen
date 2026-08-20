@@ -28,10 +28,12 @@ generation flow always uses Auto: the AI chooses a narrative-appropriate count,
 normally 5 to 15. The user can add or remove slides in the editor afterward.
 The offline stub uses a bounded word-count heuristic for Auto mode.
 
-Generation jobs also snapshot a validated theme id. Modern Blue is the default
-and is compiled from the pinned Presenton Modern template artifact;
-Editorial Cobalt, Warm Studio, and Midnight Signal use product-owned native
-layouts. Chart and table layouts remain excluded from automatic selection.
+Generation jobs snapshot a template id and a color scheme id, stored together
+as `theme_id` (`modern:professional-blue` by default). Every new deck compiles
+the matching Presenton layout pack, then applies the chosen color scheme.
+Editorial Cobalt, Warm Studio, and Midnight Signal remain as legacy aliases
+for older jobs. Chart and table layouts remain excluded from automatic
+selection.
 
 ## Provider boundary
 

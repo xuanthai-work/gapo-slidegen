@@ -33,9 +33,8 @@ editor. Pipeline asset planning is a no-op.
 - Normalized content is stored per-user with automatic retention cleanup.
 
 ### Themes & Export
-- Four visual themes: **Modern Blue** (Presenton template compile), plus
-  **Editorial Cobalt**, **Warm Studio**, and **Midnight Signal** (native
-  layouts).
+- Eight Presenton layout packs and five color schemes, chosen in the generate
+  HUD. Default is **Modern** with **Professional Blue**.
 - Export to **native PPTX** with editable text, shapes, tables, charts, and
   embedded images.
 

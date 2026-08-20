@@ -3,15 +3,24 @@ from uuid import uuid4
 from app.generation.provider import GenerationRequest
 from app.generation.presenton_template import PresentonTemplateAdapter
 from app.generation.stages.content_generator import build_content_generator
-from app.generation.stages.native_content_generator import NativeContentGenerator
 from app.generation.stages.models import StoryOutline, StoryOutlineItem
 from app.generation.stages.presenton_content_generator import PresentonContentGenerator
+from app.generation.themes import compose_theme_id, parse_theme_ref
 
 
-def test_modern_blue_uses_presenton_other_themes_use_native() -> None:
+def test_every_product_theme_uses_presenton() -> None:
     assert isinstance(build_content_generator("modern-blue"), PresentonContentGenerator)
-    for theme_id in ("editorial-cobalt", "warm-studio", "midnight-signal"):
-        assert isinstance(build_content_generator(theme_id), NativeContentGenerator)
+    for theme_id in ("editorial-cobalt", "warm-studio", "midnight-signal", "swift:edge-yellow"):
+        generator = build_content_generator(theme_id)
+        assert isinstance(generator, PresentonContentGenerator)
+
+
+def test_legacy_theme_ids_map_onto_presenton_pairs() -> None:
+    assert parse_theme_ref("modern-blue") == ("modern", "professional-blue")
+    assert parse_theme_ref("editorial-cobalt") == ("editorial", "professional-blue")
+    assert parse_theme_ref("warm-studio") == ("executive", "edge-yellow")
+    assert parse_theme_ref("midnight-signal") == ("dynamic", "professional-dark")
+    assert compose_theme_id("swift", "mint-blue") == "swift:mint-blue"
 
 
 def test_every_presenton_layout_exposes_content_constraints() -> None:

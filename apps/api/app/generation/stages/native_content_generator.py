@@ -73,7 +73,7 @@ class NativeContentGenerator:
     ) -> dict[str, object]:
         del assets
         _theme, palette, typography = self._render_theme(request)
-        theme_id = str(_theme["id"])
+        theme_id = request.theme_id
         items = outline.items
         if not items:
             item = StoryOutlineItem(id=str(uuid4()), title=request.title, content="")

@@ -21,14 +21,11 @@ __all__ = [
 
 
 def build_content_generator(theme_id: str) -> ContentGenerator:
-    """Return the renderer appropriate for the requested theme.
+    """Return the Presenton renderer for the requested template."""
+    from ..themes import parse_theme_ref
 
-    Modern Blue compiles the Presenton template. The other product themes keep
-    their native layouts so color, type, and composition actually change.
-    """
-    if theme_id == "modern-blue":
-        return PresentonContentGenerator()
-    return NativeContentGenerator()
+    template_id, _scheme = parse_theme_ref(theme_id)
+    return PresentonContentGenerator(template_id=template_id)
 
 
 class ThemeDispatchContentGenerator:

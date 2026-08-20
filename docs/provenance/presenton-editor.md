@@ -88,8 +88,12 @@ servers/nextjs/app/(presentation-generator)/(dashboard)/theme/components/ThemePa
 The pinned `templates/modern/template.json` is vendored unchanged at
 `apps/api/app/generation/templates/modern.json` (SHA-256
 `2BF0E68287893B0314DA49A46C7237A6BA6D1B32F1EB0BE2A457DCDB52C0D323`).
-`PresentonTemplateAdapter` reads that artifact at runtime and compiles its
-nested component tree into the product-owned canonical schema.
+The same Presenton packs are vendored beside it as `editorial.json`,
+`executive.json`, `swift.json`, `standard.json`, `momentum.json`,
+`general.json`, and `dynamic.json`. `PresentonTemplateAdapter` reads the pack
+named in `theme_id` and compiles its nested component tree into the
+product-owned canonical schema. Color schemes are applied after compile; they
+are not upstream Presenton themes.
 
 Intentional changes:
 
@@ -101,19 +105,19 @@ Intentional changes:
   outlines and the offline stub.
 - Convert polygon vectors to their editable rectangular bounds because the MVP
   shape schema does not yet support arbitrary vector points.
-- Replace image and icon slots with editable placeholders until generated or
-  uploaded assets can be assigned to template slots.
+- Omit large image slots when no asset is assigned. Small icon wells may keep a
+  local SVG fallback.
 - Keep chart and table layouts disabled in automatic selection until structured
   generation can supply truthful data for them.
 - Keep all element identities, geometry, and text editable through the current
   editor and PPTX adapter.
 - Serve Montserrat locally instead of loading the Google Fonts CSS URL at
   runtime.
-- Name the adapted initial theme `modern-blue` to avoid using Presenton as
-  product branding.
+- Identify a generated deck as `template:scheme` (default
+  `modern:professional-blue`). `modern-blue` remains a legacy alias.
 
-The adapter automatically cycles through six compatible Modern content layouts;
-the imported artifact contains all ten upstream layouts. The Montserrat font
+New generation always compiles the selected pack. The Modern artifact still
+contains ten upstream layouts; other packs vary. The Montserrat font
 files are licensed under the SIL Open Font License 1.1.
 The license text is stored at `LICENSES/Montserrat-OFL-1.1.txt`. The repeatable
 import command is:

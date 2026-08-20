@@ -22,36 +22,14 @@ import {
 import { EmptyState } from "./components/empty-state";
 import { LandingHero } from "./components/landing-hero";
 import { Skeleton } from "./components/skeleton";
-import { TemplateCard } from "./components/template-card";
+import { ThemeHud, type ThemeHudSelection } from "./components/theme-hud";
 import { ThemeToggle } from "./components/theme-toggle";
 
 type ComposerMode = "prompt" | "manuscript" | "file";
-type ThemeId = "modern-blue" | "editorial-cobalt" | "warm-studio" | "midnight-signal";
-
-type ThemePalette = { paper: string; ink: string; accent: string };
-
-const themes: Array<{ id: ThemeId; name: string; colors: ThemePalette }> = [
-  {
-    id: "modern-blue",
-    name: "Modern Blue",
-    colors: { paper: "#FFFFFF", ink: "#1E4CD9", accent: "#F5F8FE" },
-  },
-  {
-    id: "editorial-cobalt",
-    name: "Editorial",
-    colors: { paper: "#172033", ink: "#285FC7", accent: "#E3AA45" },
-  },
-  {
-    id: "warm-studio",
-    name: "Warm Studio",
-    colors: { paper: "#2E2925", ink: "#C45132", accent: "#D9A441" },
-  },
-  {
-    id: "midnight-signal",
-    name: "Midnight",
-    colors: { paper: "#09111F", ink: "#4F86F7", accent: "#F4B860" },
-  },
-];
+type PendingGeneration =
+  | { kind: "text" }
+  | { kind: "file"; file: File }
+  | { kind: "retry"; source: StoredSource };
 
 export function Dashboard() {
   const [user, setUser] = useState<CurrentUser | null>(null);
@@ -59,7 +37,8 @@ export function Dashboard() {
   const [startingSourceId, setStartingSourceId] = useState<string | null>(null);
   const [activeGenerationSource, setActiveGenerationSource] = useState<StoredSource | null>(null);
   const [mode, setMode] = useState<ComposerMode>("prompt");
-  const [themeId, setThemeId] = useState<ThemeId>("modern-blue");
+  const [hudOpen, setHudOpen] = useState(false);
+  const [pendingGeneration, setPendingGeneration] = useState<PendingGeneration | null>(null);
   const [title, setTitle] = useState("");
   const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -129,8 +108,25 @@ export function Dashboard() {
       .finally(() => setLoading(false));
   }, []);
 
-  async function createTextSource(event: FormEvent<HTMLFormElement>) {
+  function openThemeHud(pending: PendingGeneration) {
+    setError(null);
+    setPendingGeneration(pending);
+    setHudOpen(true);
+  }
+
+  function closeThemeHud() {
+    setHudOpen(false);
+    setPendingGeneration(null);
+    if (fileInput.current) fileInput.current.value = "";
+  }
+
+  function requestTextGeneration(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!text.trim()) return;
+    openThemeHud({ kind: "text" });
+  }
+
+  async function createTextSource(selection: ThemeHudSelection) {
     await runSubmission(async () => {
       const source = await apiFetch<StoredSource>("/v1/sources/text", {
         method: "POST",
@@ -142,11 +138,11 @@ export function Dashboard() {
       });
       setTitle("");
       setText("");
-      await startGeneration(source, themeId);
+      await startGeneration(source, selection);
     }, "Could not create the source.");
   }
 
-  async function uploadFile(file: File) {
+  async function uploadFile(file: File, selection: ThemeHudSelection) {
     await runSubmission(async () => {
       const body = new FormData();
       body.append("file", file);
@@ -154,10 +150,27 @@ export function Dashboard() {
         method: "POST",
         body,
       });
-      await startGeneration(source, themeId);
+      await startGeneration(source, selection);
     }, "Could not upload the document.", () => {
       if (fileInput.current) fileInput.current.value = "";
     });
+  }
+
+  async function confirmThemeHud(selection: ThemeHudSelection) {
+    const pending = pendingGeneration;
+    setHudOpen(false);
+    setPendingGeneration(null);
+    if (pending?.kind === "file") {
+      await uploadFile(pending.file, selection);
+      return;
+    }
+    if (pending?.kind === "retry") {
+      await startGeneration(pending.source, selection);
+      return;
+    }
+    if (pending?.kind === "text") {
+      await createTextSource(selection);
+    }
   }
 
   async function logout() {
@@ -167,7 +180,7 @@ export function Dashboard() {
 
   async function startGeneration(
     source: StoredSource,
-    requestedThemeId: ThemeId = themeId,
+    selection: ThemeHudSelection,
   ) {
     setError(null);
     setStartingSourceId(source.id);
@@ -178,7 +191,8 @@ export function Dashboard() {
         body: JSON.stringify({
           source_id: source.id,
           language: navigator.language.toLowerCase().startsWith("vi") ? "vi" : "en",
-          theme_id: requestedThemeId,
+          template_id: selection.templateId,
+          color_scheme_id: selection.colorSchemeId,
         }),
       });
       console.log("[SSE] generation started", job.id, job.status);
@@ -381,30 +395,15 @@ export function Dashboard() {
                 disabled={submitting}
                 onChange={(event) => {
                   const file = event.target.files?.[0];
-                  if (file) void uploadFile(file);
+                  if (file) openThemeHud({ kind: "file", file });
                 }}
               />
               <label className="button button--primary" htmlFor="source-file">
-                <UploadSimple size={17} /> {submitting ? "Working…" : "Choose file & generate"}
+                <UploadSimple size={17} /> {submitting ? "Working…" : "Choose file"}
               </label>
-              <fieldset className="template-picker" aria-label="Visual theme">
-                <legend className="template-picker__legend">Visual theme</legend>
-                <div className="template-picker__grid">
-                  {themes.map((theme) => (
-                    <TemplateCard
-                      key={theme.id}
-                      id={theme.id}
-                      name={theme.name}
-                      colors={theme.colors}
-                      selected={themeId === theme.id}
-                      onSelect={(id) => setThemeId(id as ThemeId)}
-                    />
-                  ))}
-                </div>
-              </fieldset>
             </div>
           ) : (
-            <form className="composer-form" onSubmit={createTextSource}>
+            <form className="composer-form" onSubmit={requestTextGeneration}>
               <label htmlFor="composer-title" className="composer-form__label">
                 Presentation title <span className="composer-form__hint">(optional)</span>
               </label>
@@ -429,21 +428,6 @@ export function Dashboard() {
                 onChange={(event) => setText(event.target.value)}
                 required
               />
-              <fieldset className="template-picker" aria-label="Visual theme">
-                <legend className="template-picker__legend">Visual theme</legend>
-                <div className="template-picker__grid">
-                  {themes.map((theme) => (
-                    <TemplateCard
-                      key={theme.id}
-                      id={theme.id}
-                      name={theme.name}
-                      colors={theme.colors}
-                      selected={themeId === theme.id}
-                      onSelect={(id) => setThemeId(id as ThemeId)}
-                    />
-                  ))}
-                </div>
-              </fieldset>
               <div className="composer-actions">
                 <span>You will go straight to the editable presentation.</span>
                 <button
@@ -485,7 +469,10 @@ export function Dashboard() {
               ) : null}
             </div>
             {activeGenerationStatus === "failed" || activeGenerationStatus === "canceled" ? (
-              <button className="button" onClick={() => void startGeneration(activeGenerationSource)}>
+              <button
+                className="button"
+                onClick={() => openThemeHud({ kind: "retry", source: activeGenerationSource })}
+              >
                 Retry
               </button>
             ) : activeGenerationStatus === "queued" || activeGenerationStatus === "running" ? (
@@ -610,6 +597,12 @@ export function Dashboard() {
           )}
         </section>
       </div>
+      <ThemeHud
+        open={hudOpen}
+        submitting={submitting}
+        onCancel={closeThemeHud}
+        onConfirm={(selection) => void confirmThemeHud(selection)}
+      />
     </main>
   );
 }

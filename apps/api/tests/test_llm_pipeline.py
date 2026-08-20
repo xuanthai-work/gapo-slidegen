@@ -156,8 +156,8 @@ def test_pipeline_preserves_selected_theme_during_rendering() -> None:
         )
     )
 
-    assert document["theme"]["id"] == "warm-studio"
-    assert document["slides"][0]["background"] == "#F2EDE5"
+    assert document["theme"]["id"] == "executive:edge-yellow"
+    assert document["slides"][0]["background"] == "#1F1F1F"
 
 
 def test_pipeline_rejects_wrong_slide_count_from_gateway() -> None:

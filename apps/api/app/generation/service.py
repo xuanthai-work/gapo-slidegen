@@ -157,15 +157,23 @@ class GenerationService:
         user: User,
         source_id: UUID,
         language: str,
-        theme_id: str,
+        template_id: str,
+        color_scheme_id: str,
     ) -> GenerationJob:
         source = self.session.scalar(build_owned_source_query(source_id, user.id))
         if source is None:
             raise SourceNotFound("Source not found.")
+        from .themes import compose_theme_id
+
         return self._enqueue_generation_job(
             owner_id=user.id,
             source_id=source.id,
-            payload={"language": language, "theme_id": theme_id},
+            payload={
+                "language": language,
+                "template_id": template_id,
+                "color_scheme_id": color_scheme_id,
+                "theme_id": compose_theme_id(template_id, color_scheme_id),
+            },
         )
 
     def enqueue_outline(
@@ -173,11 +181,14 @@ class GenerationService:
         *,
         user: User,
         outline_id: UUID,
-        theme_id: str = "modern-blue",
+        template_id: str = "modern",
+        color_scheme_id: str = "professional-blue",
     ) -> GenerationJob:
         outline = self.session.scalar(build_owned_outline_query(outline_id, user.id))
         if outline is None:
             raise SourceNotFound("Outline not found.")
+        from .themes import compose_theme_id
+
         return self._enqueue_generation_job(
             owner_id=user.id,
             source_id=outline.source_id,
@@ -187,7 +198,9 @@ class GenerationService:
                 "title": outline.title,
                 "slide_count": len(outline.items),
                 "language": outline.language,
-                "theme_id": theme_id,
+                "template_id": template_id,
+                "color_scheme_id": color_scheme_id,
+                "theme_id": compose_theme_id(template_id, color_scheme_id),
             },
         )
 

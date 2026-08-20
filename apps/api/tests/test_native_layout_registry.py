@@ -204,7 +204,12 @@ def test_theme_dispatch_selector_routes_native_and_presenton_by_theme() -> None:
     cover = StoryOutlineItem(id="cover", title="Pitch", content="", role="cover")
 
     assert selector.select(cover, index=0, theme_id="modern-blue") == "title_slide"
-    assert selector.select(cover, index=0, theme_id="warm-studio") == "cover-warm"
+    assert selector.select(cover, index=0, theme_id="warm-studio") == (
+        "centered_title_metadata_6418"
+    )
+    assert selector.select(cover, index=0, theme_id="editorial-cobalt") == (
+        "title_slide_with_image_collage_and_footer"
+    )
 
 
 def test_native_generator_compiles_selected_layout_id_and_keeps_blocks() -> None:

@@ -25,13 +25,15 @@ test.describe("shell", () => {
     await expect(page.getByRole("heading", { name: /what are we presenting/i })).toBeVisible();
     await expect(page.getByRole("tab", { name: /prompt/i })).toHaveAttribute("aria-selected", "true");
 
-    // Theme picker has 4 cards
-    const cards = page.getByRole("radio");
-    await expect(cards).toHaveCount(4);
-
-    // Select a non-default theme
-    await page.getByRole("radio", { name: /warm studio/i }).click();
-    await expect(page.getByRole("radio", { name: /warm studio/i })).toHaveAttribute("aria-checked", "true");
+    // Generate opens the visual-system HUD instead of inline theme cards
+    await page.getByLabel("Prompt").fill("A short deck about river safety.");
+    await page.getByRole("button", { name: /generate presentation/i }).click();
+    await expect(page.getByRole("dialog", { name: /visual system/i })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Use Modern" })).toBeVisible();
+    await page.getByRole("button", { name: "Use Modern" }).click();
+    await expect(page.getByText(/modern with professional blue/i)).toBeVisible();
+    await page.getByRole("button", { name: "Close theme picker" }).click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
 
     // Theme toggle persists dark mode across reload
     await page.getByRole("button", { name: /switch to dark theme/i }).click();

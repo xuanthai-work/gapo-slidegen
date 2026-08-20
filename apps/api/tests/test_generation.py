@@ -105,10 +105,20 @@ def test_stub_renderer_applies_theme_and_varied_editable_layouts() -> None:
         )
     )
 
-    assert document["theme"]["id"] == "warm-studio"
-    assert len({slide["background"] for slide in document["slides"]}) >= 2
-    assert document["slides"][2]["elements"][0]["type"] == "shape"
-    assert all(element["type"] in {"text", "shape"} for slide in document["slides"] for element in slide["elements"])
+    assert document["theme"]["id"] == "executive:edge-yellow"
+    assert document["slides"][0]["background"] == "#1F1F1F"
+    assert all(
+        element["type"] in {"text", "shape", "image", "svg"}
+        for slide in document["slides"]
+        for element in slide["elements"]
+    )
+    assert len({
+        tuple(
+            (element["type"], element["position"]["x"], element["position"]["y"])
+            for element in slide["elements"]
+        )
+        for slide in document["slides"]
+    }) >= 2
 
 
 def test_themes_change_composition_not_only_colors() -> None:
@@ -129,7 +139,7 @@ def test_themes_change_composition_not_only_colors() -> None:
                 outline=outline,
             )
         )
-        for theme_id in ("editorial-cobalt", "warm-studio", "midnight-signal")
+        for theme_id in ("editorial:professional-blue", "swift:professional-blue", "dynamic:professional-dark")
     ]
 
     cover_signatures = {
@@ -151,7 +161,7 @@ def test_themes_change_composition_not_only_colors() -> None:
     assert len(content_signatures) == 3
 
 
-def test_renderer_uses_six_layout_archetypes_and_keeps_elements_on_canvas() -> None:
+def test_non_modern_templates_keep_elements_on_canvas() -> None:
     outline = [{"id": "cover", "title": "Layout study", "content": ""}]
     outline.extend(
         {
@@ -169,16 +179,12 @@ def test_renderer_uses_six_layout_archetypes_and_keeps_elements_on_canvas() -> N
             sections=[],
             language="en",
             slide_count=7,
-            theme_id="editorial-cobalt",
+            theme_id="editorial:professional-blue",
             outline=outline,
         )
     )
 
-    signatures = {
-        tuple((element["type"], element["position"]["x"], element["position"]["y"]) for element in slide["elements"])
-        for slide in document["slides"][1:]
-    }
-    assert len(signatures) == 6
+    assert document["theme"]["id"] == "editorial:professional-blue"
     for slide in document["slides"]:
         for element in slide["elements"]:
             assert element["position"]["x"] >= 0
@@ -215,8 +221,8 @@ def test_modern_blue_adapts_presenton_geometry_and_typography() -> None:
     )
 
     assert document["theme"]["fonts"] == {
-        "heading": "Montserrat",
-        "body": "Montserrat",
+        "heading": "Inter",
+        "body": "Inter",
     }
     cover_heading = next(
         element
@@ -233,7 +239,7 @@ def test_modern_blue_adapts_presenton_geometry_and_typography() -> None:
     }
     assert len(content_signatures) == len(MODERN_CONTENT_LAYOUT_IDS)
     assert all(
-        element.get("font", {}).get("family") == "Montserrat"
+        element.get("font", {}).get("family") == "Inter"
         for slide in document["slides"]
         for element in slide["elements"]
         if element["type"] == "text"

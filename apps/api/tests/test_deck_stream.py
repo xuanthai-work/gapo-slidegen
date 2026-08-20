@@ -195,6 +195,32 @@ def test_parser_rejects_malformed_dotted_item_slot_marker() -> None:
         parser.feed("[[SLIDE slide-1]][[SLOT items.one.heading]]")
 
 
+def test_parser_treats_layout_id_slot_as_the_next_expected_slot() -> None:
+    parser = TaggedDeckStreamParser(
+        _deck("slide-1"),
+        job_id="job-123",
+        selected_layouts={"slide-1": "title_with_accent_footer_6891"},
+        layout_slots={"title_with_accent_footer_6891": ("title", "body")},
+    )
+
+    events = parser.feed(
+        "[[SLIDE slide-1]]"
+        "[[SLOT title_with_accent_footer_6891]]Cover title[[/SLOT]]"
+        "[[SLOT body]]Cover body[[/SLOT]]"
+        "[[/SLIDE]]"
+    )
+    parser.finish()
+
+    completed = events[-1]
+    assert completed.type == "slide.completed"
+    assert completed.data["content"] == SlideContent(
+        slide_id="slide-1",
+        title="Cover title",
+        layout_id="title_with_accent_footer_6891",
+        slots={"body": "Cover body"},
+    )
+
+
 @pytest.mark.parametrize(
     ("payload", "message"),
     [
