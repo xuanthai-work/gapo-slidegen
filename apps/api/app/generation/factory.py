@@ -24,12 +24,12 @@ logger = logging.getLogger(__name__)
 
 
 def _resolve_repo_root() -> Path:
-    """Locate the monorepo root (contains packages/slide-rasterizer when built)."""
+    """Locate the monorepo root (packages/ or root package.json)."""
     start = Path(__file__).resolve().parent
     for parent in (start, *start.parents):
-        if (parent / "packages" / "slide-rasterizer").is_dir():
+        if (parent / "packages").is_dir() or (parent / "package.json").is_file():
             return parent
-    return Path(__file__).resolve().parents[3]
+    raise RuntimeError("Unable to locate repository root from factory.py")
 
 
 # Legacy Gemini provider is kept as a disabled fallback. To re-enable, import

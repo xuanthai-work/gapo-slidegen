@@ -72,6 +72,11 @@ def test_build_visual_stages_requires_model_when_empty_string() -> None:
         factory._build_visual_stages(settings, "company-gateway")
 
 
+def test_resolve_repo_root_is_monorepo_root() -> None:
+    root = factory._resolve_repo_root()
+    assert (root / "packages").is_dir() or (root / "package.json").is_file()
+
+
 def test_build_visual_stages_injects_placeholders_when_enabled() -> None:
     settings = _settings(
         generation_provider="company-gateway",
@@ -83,6 +88,9 @@ def test_build_visual_stages_injects_placeholders_when_enabled() -> None:
     assert rasterizer.name == "cli"
     assert isinstance(gate, CompanyGatewayOcrVisualGate)
     assert gate.name == "company-gateway-ocr"
+    assert (rasterizer.repo_root / "packages").is_dir() or (
+        rasterizer.repo_root / "package.json"
+    ).is_file()
 
 
 def test_factory_wires_visual_stages_for_gateway(monkeypatch) -> None:
