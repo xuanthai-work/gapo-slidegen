@@ -1,14 +1,48 @@
 from __future__ import annotations
 
+import base64
+import time
 import unicodedata
 from dataclasses import dataclass, field
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 
+import httpx
+from pydantic import BaseModel, ValidationError
+
+from ..llm_schema import llm_json_schema
 from ..models import SlideContent
+from ..provider import ProviderResponseError
 
 VisualIssueCode = Literal["TEXT_MISSING", "TEXT_TRUNCATED", "TEXT_UNREADABLE"]
 _ALLOWED_CODES = frozenset({"TEXT_MISSING", "TEXT_TRUNCATED", "TEXT_UNREADABLE"})
 
+_OCR_SYSTEM = (
+    "Return only JSON. Extract visible slide text in reading order. "
+    "Do not suggest layouts or repairs."
+)
+_OCR_USER_PROMPT = (
+    "Extract all visible text from this slide screenshot in reading order. "
+    "Set unreadable true only if the slide text cannot be read. "
+    "Return JSON matching this schema exactly:"
+)
+
+
+class _OcrResponse(BaseModel):
+    extracted_text: str = ""
+    unreadable: bool = False
+    notes: str = ""
+
+
+def _json_object(text: str) -> str:
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        stripped = stripped.removeprefix("```json").removeprefix("```")
+        stripped = stripped.removesuffix("```").strip()
+    start = stripped.find("{")
+    end = stripped.rfind("}")
+    if start < 0 or end < start:
+        raise ProviderResponseError("Company gateway returned text instead of a JSON object.")
+    return stripped[start : end + 1]
 
 @dataclass(frozen=True, slots=True)
 class VisualIssue:
@@ -148,12 +182,86 @@ def classify_extracted_text(
 
 
 class CompanyGatewayOcrVisualGate:
-    """OCR visual gate via company gateway (placeholder until Task 7)."""
+    """OCR visual gate via the company OpenAI-compatible gateway."""
 
     name = "company-gateway-ocr"
 
-    def __init__(self, **kwargs: object) -> None:
-        self.kwargs = kwargs
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        api_key: str,
+        model: str,
+        chat_path: str = "/v1/chat/completions",
+        client: Any | None = None,
+    ) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.api_key = api_key
+        self.model = model
+        self.chat_path = "/" + chat_path.strip("/")
+        self.client = client
+
+    @staticmethod
+    def _is_retryable_status(status_code: int) -> bool:
+        return status_code in {429, 500, 502, 503, 504}
+
+    def _post_ocr_once(self, client: Any, *, png: bytes) -> str:
+        image_url = "data:image/png;base64," + base64.b64encode(png).decode("ascii")
+        response = client.post(
+            self.base_url + self.chat_path,
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": self.model,
+                "messages": [
+                    {"role": "system", "content": _OCR_SYSTEM},
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": _OCR_USER_PROMPT + "\n" + llm_json_schema(_OcrResponse),
+                            },
+                            {"type": "image_url", "image_url": {"url": image_url}},
+                        ],
+                    },
+                ],
+                "temperature": 0,
+                "max_tokens": 2048,
+            },
+        )
+        response.raise_for_status()
+        payload = response.json()
+        content = payload["choices"][0]["message"]["content"]
+        if not isinstance(content, str) or not content.strip():
+            raise ProviderResponseError("Company gateway returned empty model content.")
+        return content
+
+    def _chat_ocr(self, *, png: bytes) -> str:
+        owns_client = self.client is None
+        client = self.client or httpx.Client(timeout=httpx.Timeout(180))
+        try:
+            for attempt in range(2):
+                try:
+                    return self._post_ocr_once(client, png=png)
+                except httpx.HTTPStatusError as error:
+                    status = error.response.status_code
+                    if self._is_retryable_status(status) and attempt < 1:
+                        time.sleep(1 << attempt)
+                        continue
+                    raise ProviderResponseError(
+                        f"Company gateway request failed: HTTP {status}."
+                    ) from error
+                except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as error:
+                    raise ProviderResponseError(
+                        f"Company gateway returned an invalid response: {error}"
+                    ) from error
+        finally:
+            if owns_client:
+                client.close()
+        raise ProviderResponseError("Company gateway request failed after retries.")
 
     def inspect(
         self,
@@ -162,4 +270,18 @@ class CompanyGatewayOcrVisualGate:
         slide: dict[str, object],
         content: SlideContent,
     ) -> VisualGateResult:
-        raise RuntimeError("OCR visual gate is not implemented")
+        from .orchestrator import SlideValidationFailed
+
+        del slide  # Intentionally unused: never send slide JSON to the model.
+        try:
+            raw = self._chat_ocr(png=png)
+            parsed = _OcrResponse.model_validate_json(_json_object(raw))
+        except (ProviderResponseError, ValidationError) as error:
+            raise SlideValidationFailed(
+                "Slide failed visual validation: VISUAL_GATE_UNAVAILABLE"
+            ) from error
+        return classify_extracted_text(
+            extracted=parsed.extracted_text,
+            unreadable=parsed.unreadable,
+            content=content,
+        )
