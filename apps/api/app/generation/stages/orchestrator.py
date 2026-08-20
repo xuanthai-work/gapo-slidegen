@@ -1,7 +1,11 @@
-from dataclasses import replace
-from typing import Mapping
+from __future__ import annotations
 
-from ..models import DeckPlan, SlideContent
+import subprocess
+from dataclasses import replace
+from typing import Mapping, Protocol
+
+from ..layouts import ContentConstraints
+from ..models import DeckPlan, SlideContent, SlidePlan
 from ..provider import GenerationRequest, OutlineRequest
 from .models import AssetPlan, GeneratedAsset, StoryOutline
 from .content_understanding import StubContentUnderstanding
@@ -18,10 +22,19 @@ from .protocols import (
     SlideValidator,
     StoryPlanner,
 )
+from .visual_gate import VisualGate
 
 
 class SlideValidationFailed(ValueError):
     pass
+
+
+class SlideRasterizer(Protocol):
+    name: str
+
+    def rasterize(self, slide: dict[str, object]) -> bytes:
+        """Return a PNG of the slide at editor stage size (1280×720)."""
+        ...
 
 
 class NullAssetPlanner:
@@ -66,6 +79,9 @@ class GenerationPipeline:
         slide_repairer: SlideRepairer | None = None,
         asset_planner: AssetPlanner | None = None,
         asset_generator: AssetGenerator | None = None,
+        slide_rasterizer: SlideRasterizer | None = None,
+        visual_gate: VisualGate | None = None,
+        visual_gate_max_repairs: int | None = None,
     ) -> None:
         self.story_planner = story_planner
         self.content_generator = content_generator
@@ -78,6 +94,13 @@ class GenerationPipeline:
         self.slide_repairer = slide_repairer
         self.asset_planner = asset_planner or NullAssetPlanner()
         self.asset_generator = asset_generator or NullAssetGenerator()
+        self.slide_rasterizer = slide_rasterizer
+        self.visual_gate = visual_gate
+        if visual_gate_max_repairs is None:
+            from .repair_dispatcher import VISUAL_GATE_MAX_REPAIRS
+
+            visual_gate_max_repairs = VISUAL_GATE_MAX_REPAIRS
+        self.visual_gate_max_repairs = visual_gate_max_repairs
         self.name = story_planner.name
 
     def generate_outline(self, request: OutlineRequest) -> list[dict[str, object]]:
@@ -209,14 +232,134 @@ class GenerationPipeline:
                 assets=assets or {},
                 contents=contents,
             )
+            mutable_contents = dict(contents)
         else:
             document = self.content_generator.render(
                 request,
                 outline,
                 assets=assets or {},
             )
-        self.validate_document(document)
+            mutable_contents = {}
+        self.accept_document(
+            document,
+            request=request,
+            outline=outline,
+            assets=assets or {},
+            contents=mutable_contents,
+        )
         return document
+
+    def accept_slide(
+        self,
+        slide: dict[str, object],
+        *,
+        request: GenerationRequest,
+        outline: StoryOutline,
+        index: int,
+        assets: Mapping[tuple[int, str], str],
+        contents: dict[str, SlideContent],
+        plan: SlidePlan | None = None,
+    ) -> dict[str, object]:
+        slide = self.validate_slide(slide)
+        rasterizer = self.slide_rasterizer
+        gate = self.visual_gate
+        if gate is None or rasterizer is None:
+            return slide
+        if index < 0 or index >= len(outline.items):
+            return slide
+        item = outline.items[index]
+        content = contents.get(item.id)
+        if content is None:
+            return slide
+
+        tried = {item.layout_id or ""}
+        from .repair_dispatcher import apply_repair_action, choose_repair_action
+
+        for attempt in range(self.visual_gate_max_repairs + 1):
+            content = contents[item.id]
+            try:
+                png = rasterizer.rasterize(slide)
+            except (OSError, subprocess.TimeoutExpired, subprocess.CalledProcessError) as error:
+                slide_id = str(slide.get("id") or item.id or "unknown")
+                raise SlideValidationFailed(
+                    f"Slide {slide_id!r} failed visual validation: VISUAL_RASTERIZE_FAILED"
+                ) from error
+            result = gate.inspect(png=png, slide=slide, content=content)
+            if result.readable:
+                return slide
+            if attempt == self.visual_gate_max_repairs:
+                codes = ", ".join(issue.code for issue in result.issues) or "fail"
+                raise SlideValidationFailed(
+                    f"Slide {item.id!r} failed visual validation: {codes}"
+                )
+            action = choose_repair_action(result.issues)
+            if self.layout_selector is None:
+                ranking = []
+                constraints = ContentConstraints(72, 240, 60, 180, 4)
+            else:
+                ranking = self.layout_selector.rank(
+                    item,
+                    index=index,
+                    theme_id=request.theme_id,
+                    assets=assets,
+                    plan=plan,
+                )
+                constraints = self.layout_selector.content_constraints(
+                    item.layout_id or content.layout_id
+                )
+            content = apply_repair_action(
+                action,
+                item=item,
+                content=content,
+                constraints=constraints,
+                ranking=ranking,
+                tried=tried,
+                issues=result.issues,
+            )
+            contents[item.id] = content
+            tried.add(item.layout_id or "")
+            slide = self.content_generator.render_slide(
+                request,
+                outline,
+                index=index,
+                assets=assets,
+                contents=contents,
+            )
+            slide = self.validate_slide(slide)
+        codes = ", ".join(issue.code for issue in result.issues) or "fail"
+        raise SlideValidationFailed(
+            f"Slide {item.id!r} failed visual validation: {codes}"
+        )
+
+    def accept_document(
+        self,
+        document: dict[str, object],
+        *,
+        request: GenerationRequest,
+        outline: StoryOutline,
+        assets: Mapping[tuple[int, str], str],
+        contents: dict[str, SlideContent],
+        plans: Mapping[str, SlidePlan] | None = None,
+    ) -> None:
+        slides = document.get("slides")
+        if not isinstance(slides, list):
+            return
+        plan_map = dict(plans) if plans else {}
+        for index, slide in enumerate(slides):
+            if not isinstance(slide, dict):
+                continue
+            item_plan = None
+            if index < len(outline.items):
+                item_plan = plan_map.get(outline.items[index].id)
+            slides[index] = self.accept_slide(
+                slide,
+                request=request,
+                outline=outline,
+                index=index,
+                assets=assets,
+                contents=contents,
+                plan=item_plan,
+            )
 
     def validate_slide(self, slide: dict[str, object]) -> dict[str, object]:
         if self.slide_validator is None:
