@@ -347,6 +347,10 @@ class _StreamingPipeline:
     def validate_slide(self, slide: dict[str, object]) -> dict[str, object]:
         return slide
 
+    def accept_slide(self, slide: dict[str, object], **kwargs) -> dict[str, object]:
+        del kwargs
+        return slide
+
 
 def test_worker_retries_incomplete_remainder_under_a_new_attempt() -> None:
     provider = _FailAfterFirstSlideProvider()

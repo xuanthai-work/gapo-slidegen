@@ -10,7 +10,7 @@ from ..models import GenerationJob, JobStatus, JobType, PresentationRecord, Sour
 from .checkpoints import InvalidGenerationCheckpoint
 from .event_transport import PublishResult
 from .layouts import ContentConstraints
-from .models import SlideContent
+from .models import DeckPlan, SlideContent
 from .provider import GenerationCancelledError, GenerationRequest, OutlineRequest, ProviderResponseError
 from .stages.models import StoryOutline
 from .stages.orchestrator import GenerationPipeline
@@ -332,6 +332,7 @@ class GenerationWorker:
                     assets=asset_map,
                     contents=contents,
                     tracker=tracker,
+                    deck_plan=deck_plan,
                 )
             else:
                 document = self._build_document(
@@ -383,6 +384,7 @@ class GenerationWorker:
         assets: dict[tuple[int, str], str],
         contents: dict[str, SlideContent],
         tracker: _StreamTracker,
+        deck_plan: DeckPlan | None = None,
     ) -> dict[str, object]:
         """Render the presentation one slide at a time, emitting stream events."""
         slides = self.pipeline.content_generator.render_slides(
@@ -394,8 +396,22 @@ class GenerationWorker:
         total = len(slides)
         theme: dict[str, object] | None = None
         streamed_slides: list[dict[str, object]] = []
+        plans = (
+            {entry.id: entry for entry in deck_plan.slides}
+            if deck_plan is not None
+            else {}
+        )
         for index, slide in enumerate(slides):
-            slide = self.pipeline.validate_slide(slide)
+            plan = plans.get(outline.items[index].id)
+            slide = self.pipeline.accept_slide(
+                slide,
+                request=request,
+                outline=outline,
+                index=index,
+                assets=assets,
+                contents=contents,
+                plan=plan,
+            )
             streamed_slides.append(slide)
             if theme is None:
                 # Pull theme from the first compiled slide if available; otherwise
@@ -431,19 +447,32 @@ class GenerationWorker:
 
             def compile_slide(index: int, written: dict[str, SlideContent]) -> dict[str, object]:
                 contents.update(written)
-                return self.pipeline.content_generator.render_slide(
+                slide = self.pipeline.content_generator.render_slide(
                     request,
                     outline,
                     index=index,
                     assets=assets,
                     contents=written,
                 )
+                plan = None
+                if deck_plan is not None:
+                    plans = {entry.id: entry for entry in deck_plan.slides}
+                    plan = plans.get(outline.items[index].id)
+                return self.pipeline.accept_slide(
+                    slide,
+                    request=request,
+                    outline=outline,
+                    index=index,
+                    assets=assets,
+                    contents=contents,
+                    plan=plan,
+                )
 
             streamer = IncrementalSlideStreamer(
                 publisher=self.event_publisher,
                 checkpoints=self.checkpoint_service or _NullCheckpoints(),
                 compile_slide=compile_slide,
-                validate_slide=self.pipeline.validate_slide,
+                validate_slide=lambda slide: slide,
                 delay_seconds=self.snapshot_coalesce_seconds,
             )
             compiled = self._stream_with_remainder_retry(
