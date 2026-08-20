@@ -114,6 +114,11 @@ class FakeLayoutSelector:
         self.plans.append(plan)
         return "title_slide" if index == 0 else "comparison-2col"
 
+    def rank(self, item, *, index, theme_id, assets=None, plan=None):
+        layout_id = self.select(item, index=index, theme_id=theme_id, plan=plan)
+        from app.generation.stages.layout_selector import LayoutCandidateScore
+        return [LayoutCandidateScore(layout_id, 1.0, ("fake",))]
+
     def content_constraints(self, layout_id: str) -> ContentConstraints:
         max_items = 0 if layout_id == "title_slide" else 2
         return ContentConstraints(72, 180, 55, 120, max_items)

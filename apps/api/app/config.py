@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     company_gateway_api_key: SecretStr | None = None
     company_gateway_model: str | None = None
     company_gateway_chat_path: str = "/v1/chat/completions"
+    visual_gate_enabled: bool = False
+    visual_gate_model: str | None = None
+    visual_gate_max_repairs: int = Field(default=2, ge=0, le=4)
+    visual_gate_rasterizer_cmd: str = "node packages/slide-rasterizer/dist/cli.js"
+    visual_gate_save_screenshots: bool = False
 
 
 @lru_cache

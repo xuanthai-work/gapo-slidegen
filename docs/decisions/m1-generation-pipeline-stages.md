@@ -187,6 +187,7 @@ right long-term direction.
 - Deck/slide plan already carries `density` and `preferred_archetype`; each pack
   still has a modest set of auto-selectable layouts.
 - Asset planning/generation code exists but is unwired.
-- Rule-based validation does not score visual quality. A VLM critic would need
-  screenshots, a vision model, and alternative layouts to repair into.
+- Rule-based validation does not score visual quality. A visual readability
+  gate (screenshot + OCR, default off; not an aesthetic VLM) is specified in
+  `docs/superpowers/specs/2026-08-20-visual-readability-gate-design.md`.
 - An optional dashboard outline-review flow remains unbuilt.

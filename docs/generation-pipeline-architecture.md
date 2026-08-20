@@ -31,7 +31,9 @@ events and opens the editor.
 ## Worker stages
 
 `N` is the number of outline slides. Happy path with company-gateway and
-streaming enabled: **`N + 4` LLM calls**.
+streaming enabled: **`N + 4` text LLM calls** when the visual readability gate
+is off (default). With the gate on, add up to **`N` vision** calls (worst case
+**`3N`** across repairs). The Node CLI rasterizer is not an LLM.
 
 ```mermaid
 flowchart TD
@@ -43,8 +45,9 @@ flowchart TD
   SlidePlan --> Layout["5. Layout selection<br/>no LLM"]
   Layout --> Copy["6. Write copy<br/>LLM × 1"]
   Copy --> Compile["7. Compile geometry<br/>no LLM"]
-  Compile --> Validate["8. Validate + repair<br/>no LLM"]
-  Validate --> Save["9. Save presentation"]
+  Compile --> Validate["8. Validate + repair geometry<br/>no LLM"]
+  Validate --> Visual["8b. Visual gate (optional)<br/>screenshot + OCR, off by default"]
+  Visual --> Save["9. Save presentation"]
 
   SourceText["Source text"] --> Understand
   SourceText --> Outline
@@ -52,7 +55,7 @@ flowchart TD
 ```
 
 If the job already carries a reviewed outline, steps 1–2 are skipped
-(`N + 2` LLM calls). Deck/slide plan and copy still run.
+(`N + 2` text LLM calls when the visual gate is off). Deck/slide plan and copy still run.
 
 ## Layout selection and compile
 
@@ -166,7 +169,11 @@ Stream copy must emit slot names only. If the model repeats a layout id as a
 `[[SLOT]]` name, the parser aliases it to the next expected slot.
 
 Rule-based validation after compile checks canvas bounds, overlap, and
-minimum font size. There is no screenshot or VLM critic.
+minimum font size. An optional visual readability gate (screenshot + OCR,
+off by default) is specified in
+`docs/superpowers/specs/2026-08-20-visual-readability-gate-design.md`
+and planned in
+`docs/superpowers/plans/2026-08-20-visual-readability-gate.md`.
 
 Local, gitignored discussion of possible visual work may exist under `futask/`.
 That folder is not product direction.

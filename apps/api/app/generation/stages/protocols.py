@@ -1,4 +1,4 @@
-from typing import Mapping, Protocol
+from typing import TYPE_CHECKING, Mapping, Protocol
 
 from ..layouts import ContentConstraints
 from ..models import DeckPlan, SlideContent, SlidePlan
@@ -11,6 +11,9 @@ from .models import (
     StoryOutlineItem,
 )
 from .slide_validator import SlideValidationResult
+
+if TYPE_CHECKING:
+    from .layout_selector import LayoutCandidateScore
 
 
 class ContentUnderstanding(Protocol):
@@ -86,6 +89,17 @@ class LayoutSelector(Protocol):
         theme_id: str,
         plan: SlidePlan | None = None,
     ) -> str:
+        ...
+
+    def rank(
+        self,
+        item: StoryOutlineItem,
+        *,
+        index: int,
+        theme_id: str,
+        assets: Mapping[tuple[int, str], str] | None = None,
+        plan: SlidePlan | None = None,
+    ) -> list["LayoutCandidateScore"]:
         ...
 
     def content_constraints(self, layout_id: str) -> ContentConstraints:

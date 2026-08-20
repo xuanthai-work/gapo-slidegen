@@ -1,0 +1,30 @@
+{
+  "name": "@gapo-slidegen/slide-rasterizer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": "./dist/cli.js",
+  "scripts": {
+    "build": "vite build && tsc -p tsconfig.cli.json",
+    "build:cli": "tsc -p tsconfig.cli.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@gapo-slidegen/slide-editor": "0.1.0",
+    "@gapo-slidegen/slide-schema": "0.1.0",
+    "konva": "10.3.0",
+    "playwright": "1.50.1",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "react-konva": "19.2.5"
+  },
+  "devDependencies": {
+    "@types/node": "26.2.0",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
+    "@vitejs/plugin-react": "5.2.0",
+    "typescript": "7.0.2",
+    "vite": "8.2.1"
+  }
+}

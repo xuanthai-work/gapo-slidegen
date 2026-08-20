@@ -1,0 +1,34 @@
+{
+  "id": "slide-title",
+  "title": "Quarterly product review",
+  "background": "#FFFFFF",
+  "revision": 0,
+  "elements": [
+    {
+      "id": "title",
+      "type": "text",
+      "position": { "x": 96, "y": 104 },
+      "size": { "width": 760, "height": 180 },
+      "rotation": 0,
+      "opacity": 1,
+      "locked": false,
+      "decorative": false,
+      "runs": [{ "text": "Quarterly product review" }],
+      "horizontalAlign": "left",
+      "verticalAlign": "top"
+    },
+    {
+      "id": "accent-shape",
+      "type": "shape",
+      "position": { "x": 96, "y": 330 },
+      "size": { "width": 420, "height": 18 },
+      "rotation": 0,
+      "opacity": 1,
+      "locked": false,
+      "decorative": true,
+      "shape": "rectangle",
+      "fill": { "color": "#285FC7", "opacity": 1 },
+      "cornerRadius": 9
+    }
+  ]
+}

@@ -30,7 +30,7 @@ from .content_understanding import (
 from .content_writer import OutlineContentWriter, ProviderContentWriter
 from .deck_planner import OutlineDeckPlanner, ProviderDeckPlanner
 from .layout_selector import NativeLayoutSelector, PresentonLayoutSelector, ThemeDispatchLayoutSelector
-from .orchestrator import GenerationPipeline, SlideValidationFailed
+from .orchestrator import GenerationPipeline, SlideRasterizer, SlideValidationFailed
 from .protocols import (
     AssetGenerator,
     AssetPlanner,
@@ -69,6 +69,7 @@ __all__ = [
     "StubContentUnderstanding",
     "GeneratedAsset",
     "GenerationPipeline",
+    "SlideRasterizer",
     "ImageAssetGenerator",
     "NullAssetGenerator",
     "LayoutSelector",
