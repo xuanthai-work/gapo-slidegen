@@ -292,6 +292,18 @@ class NativeLayoutSelector:
         order = _NATIVE_CONTENT_ORDER.get(theme_id, _NATIVE_CONTENT_ORDER["editorial-cobalt"])
         return f"content-{order[(index - 1) % len(order)]}"
 
+    def rank(
+        self,
+        item: StoryOutlineItem,
+        *,
+        index: int,
+        theme_id: str,
+        assets: Mapping[tuple[int, str], str] | None = None,
+        plan: SlidePlan | None = None,
+    ) -> list[LayoutCandidateScore]:
+        layout_id = self.select(item, index=index, theme_id=theme_id, assets=assets, plan=plan)
+        return [LayoutCandidateScore(layout_id, 1.0, ("native-select",))]
+
     def content_constraints(self, layout_id: str) -> ContentConstraints:
         return self.registry.content_constraints(layout_id)
 
@@ -331,6 +343,23 @@ class ThemeDispatchLayoutSelector:
         plan: SlidePlan | None = None,
     ) -> str:
         return self._delegate(theme_id).select(
+            item,
+            index=index,
+            theme_id=theme_id,
+            assets=assets,
+            plan=plan,
+        )
+
+    def rank(
+        self,
+        item: StoryOutlineItem,
+        *,
+        index: int,
+        theme_id: str,
+        assets: Mapping[tuple[int, str], str] | None = None,
+        plan: SlidePlan | None = None,
+    ) -> list[LayoutCandidateScore]:
+        return self._delegate(theme_id).rank(
             item,
             index=index,
             theme_id=theme_id,
