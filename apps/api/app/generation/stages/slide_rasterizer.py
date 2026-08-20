@@ -63,4 +63,13 @@ class CliSlideRasterizer:
                 raise SlideValidationFailed(
                     "Slide failed visual validation: VISUAL_RASTERIZE_FAILED"
                 )
+            self._maybe_dump_screenshot(slide, data)
             return data
+
+    def _maybe_dump_screenshot(self, slide: dict[str, object], data: bytes) -> None:
+        if not self.save_screenshots or self.storage_root is None:
+            return
+        slide_id = str(slide.get("id") or "unknown")
+        dump_path = Path(self.storage_root) / "visual-gate" / f"{slide_id}.png"
+        dump_path.parent.mkdir(parents=True, exist_ok=True)
+        dump_path.write_bytes(data)

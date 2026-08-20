@@ -224,6 +224,7 @@ class GenerationPipeline:
         *,
         assets: Mapping[tuple[int, str], str] | None = None,
         contents: Mapping[str, SlideContent] | None = None,
+        deck_plan: DeckPlan | None = None,
     ) -> dict[str, object]:
         if contents:
             document = self.content_generator.render(
@@ -240,12 +241,18 @@ class GenerationPipeline:
                 assets=assets or {},
             )
             mutable_contents = {}
+        plans = (
+            {plan.id: plan for plan in deck_plan.slides}
+            if deck_plan is not None
+            else None
+        )
         self.accept_document(
             document,
             request=request,
             outline=outline,
             assets=assets or {},
             contents=mutable_contents,
+            plans=plans,
         )
         return document
 
@@ -273,7 +280,13 @@ class GenerationPipeline:
             return slide
 
         tried = {item.layout_id or ""}
+        last_constraints: ContentConstraints | None = None
         from .repair_dispatcher import apply_repair_action, choose_repair_action
+
+        def layout_constraints(layout_id: str) -> ContentConstraints:
+            if self.layout_selector is None:
+                return ContentConstraints(72, 240, 60, 180, 4)
+            return self.layout_selector.content_constraints(layout_id)
 
         for attempt in range(self.visual_gate_max_repairs + 1):
             content = contents[item.id]
@@ -295,7 +308,7 @@ class GenerationPipeline:
             action = choose_repair_action(result.issues)
             if self.layout_selector is None:
                 ranking = []
-                constraints = ContentConstraints(72, 240, 60, 180, 4)
+                catalog_constraints = ContentConstraints(72, 240, 60, 180, 4)
             else:
                 ranking = self.layout_selector.rank(
                     item,
@@ -304,17 +317,18 @@ class GenerationPipeline:
                     assets=assets,
                     plan=plan,
                 )
-                constraints = self.layout_selector.content_constraints(
+                catalog_constraints = self.layout_selector.content_constraints(
                     item.layout_id or content.layout_id
                 )
-            content = apply_repair_action(
+            content, last_constraints = apply_repair_action(
                 action,
                 item=item,
                 content=content,
-                constraints=constraints,
+                constraints=last_constraints or catalog_constraints,
                 ranking=ranking,
                 tried=tried,
                 issues=result.issues,
+                layout_constraints=layout_constraints,
             )
             contents[item.id] = content
             tried.add(item.layout_id or "")
@@ -419,7 +433,13 @@ class GenerationPipeline:
         asset_plan = self.plan_assets(outline, request)
         generated = self.asset_generator.generate(asset_plan)
         asset_map = _build_asset_map(generated)
-        return self.render(request, outline, assets=asset_map, contents=contents)
+        return self.render(
+            request,
+            outline,
+            assets=asset_map,
+            contents=contents,
+            deck_plan=deck_plan,
+        )
 
 
 def _build_asset_map(generated: list[GeneratedAsset]) -> dict[tuple[int, str], str]:

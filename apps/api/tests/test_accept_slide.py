@@ -6,9 +6,12 @@ from app.generation.layouts import ContentConstraints
 from app.generation.models import SlideContent
 from app.generation.provider import GenerationRequest, OutlineRequest
 from app.generation.stages import GenerationPipeline, StoryOutline, StoryOutlineItem
+from app.generation.stages.content_writer import OutlineContentWriter
+from app.generation.stages.deck_planner import OutlineDeckPlanner
 from app.generation.stages.layout_selector import LayoutCandidateScore
 from app.generation.stages.orchestrator import SlideValidationFailed
 from app.generation.stages.repair_dispatcher import VISUAL_GATE_MAX_REPAIRS
+from app.generation.stages.slide_planner import OutlineSlidePlanner
 from app.generation.stages.visual_gate import VisualGateResult, VisualIssue
 
 LONG_BODY = (
@@ -126,12 +129,17 @@ class RankingSelector:
 
     def __init__(self, layout_ids: list[str]) -> None:
         self.layout_ids = layout_ids
+        self.select_plans: list = []
+        self.rank_plans: list = []
 
     def select(self, item, *, index, theme_id, plan=None) -> str:
-        return self.rank(item, index=index, theme_id=theme_id, plan=plan)[0].layout_id
+        del item, index, theme_id
+        self.select_plans.append(plan)
+        return self.layout_ids[0]
 
     def rank(self, item, *, index, theme_id, assets=None, plan=None):
-        del item, index, theme_id, assets, plan
+        del item, index, theme_id, assets
+        self.rank_plans.append(plan)
         return [
             LayoutCandidateScore(layout_id, float(len(self.layout_ids) - offset), (layout_id,))
             for offset, layout_id in enumerate(self.layout_ids)
@@ -145,15 +153,21 @@ class RankingSelector:
 class CountingGate:
     name = "counting"
 
-    def __init__(self, code: str = "TEXT_TRUNCATED", slot: str = "body") -> None:
+    def __init__(
+        self,
+        code: str = "TEXT_TRUNCATED",
+        slot: str = "body",
+        fail_times: int = 1,
+    ) -> None:
         self.calls = 0
         self.code = code
         self.slot = slot
+        self.fail_times = fail_times
 
     def inspect(self, *, png: bytes, slide: dict[str, object], content: SlideContent) -> VisualGateResult:
         del png, slide, content
         self.calls += 1
-        if self.calls == 1:
+        if self.calls <= self.fail_times:
             return VisualGateResult(
                 extracted_text="",
                 issues=[
@@ -307,6 +321,51 @@ def test_accept_slide_truncates_then_accepts_without_changing_layout() -> None:
     assert generator.layout_ids == ["grid"]
 
 
+def test_accept_slide_second_truncate_shrinks_further_than_one() -> None:
+    rasterizer = FakeRasterizer()
+    generator = RecordingGenerator()
+    pipeline = _pipeline(
+        rasterizer=rasterizer,
+        visual_gate=CountingGate(fail_times=2, slot="items.2.body"),
+        generator=generator,
+        selector=RankingSelector(["grid", "list"]),
+    )
+    outline = _outline(layout_id="grid")
+    contents = {
+        "s1": SlideContent(
+            slide_id="s1",
+            title="T",
+            layout_id="grid",
+            slots={
+                "body": LONG_BODY,
+                "items": [
+                    {"heading": "A", "body": "Alpha point with a full sentence."},
+                    {"heading": "B", "body": "Bravo point with a full sentence."},
+                    {"heading": "C", "body": "Charlie point with a full sentence."},
+                ],
+            },
+        )
+    }
+    once_limit = max(48, int(240 * 0.7))
+    twice_limit = max(48, int(once_limit * 0.7))
+    pipeline.accept_slide(
+        {"id": "s1", "elements": []},
+        request=_request(),
+        outline=outline,
+        index=0,
+        assets={},
+        contents=contents,
+        plan=None,
+    )
+    repaired_items = contents["s1"].slots["items"]
+    repaired_body = str(contents["s1"].slots["body"])
+    assert isinstance(repaired_items, list)
+    assert len(rasterizer.calls) == 3
+    assert outline.items[0].layout_id == "grid"
+    assert len(repaired_items) == 2
+    assert len(repaired_body) <= twice_limit
+
+
 def test_accept_slide_switches_to_next_ranked_layout_when_unreadable() -> None:
     rasterizer = FakeRasterizer()
     generator = RecordingGenerator()
@@ -413,3 +472,24 @@ def test_render_runs_accept_document_when_gate_is_wired() -> None:
     }
     pipeline.render(_request(), outline, assets={}, contents=contents)
     assert len(rasterizer.calls) == 1
+
+
+def test_generate_passes_slide_plan_into_visual_repair_rank() -> None:
+    selector = RankingSelector(["grid", "list"])
+    pipeline = GenerationPipeline(
+        story_planner=FakeStoryPlanner(),
+        content_generator=RecordingGenerator(),
+        deck_planner=OutlineDeckPlanner(),
+        slide_planner=OutlineSlidePlanner(),
+        layout_selector=selector,
+        content_writer=OutlineContentWriter(),
+        slide_validator=None,
+        slide_rasterizer=FakeRasterizer(),
+        visual_gate=CountingGate(code="TEXT_UNREADABLE", slot="title"),
+    )
+    pipeline.generate(_request())
+    assert selector.select_plans
+    assert all(plan is not None for plan in selector.select_plans)
+    assert selector.rank_plans
+    assert selector.rank_plans[0] == selector.select_plans[0]
+    assert selector.rank_plans[0] is not None

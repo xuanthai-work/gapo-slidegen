@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Literal, NoReturn
 
 from ..content_schema import constrain_slide_content
@@ -50,13 +51,34 @@ def apply_repair_action(
     ranking: list[LayoutCandidateScore],
     tried: set[str],
     issues: list[VisualIssue],
-) -> SlideContent:
+    layout_constraints: Callable[[str], ContentConstraints],
+) -> tuple[SlideContent, ContentConstraints]:
     if action == "fail":
         _fail(item.id, issues)
     if action == "tighter_truncate":
         drop_last = any((issue.slot or "").startswith("items") for issue in issues)
         next_constraints = scale_constraints(constraints, drop_last_item=drop_last)
-        return constrain_slide_content(content, next_constraints)
+        if next_constraints != constraints:
+            return constrain_slide_content(content, next_constraints), next_constraints
+    return _apply_next_ranked_layout(
+        item=item,
+        content=content,
+        ranking=ranking,
+        tried=tried,
+        issues=issues,
+        layout_constraints=layout_constraints,
+    )
+
+
+def _apply_next_ranked_layout(
+    *,
+    item: StoryOutlineItem,
+    content: SlideContent,
+    ranking: list[LayoutCandidateScore],
+    tried: set[str],
+    issues: list[VisualIssue],
+    layout_constraints: Callable[[str], ContentConstraints],
+) -> tuple[SlideContent, ContentConstraints]:
     next_id = next(
         (
             candidate.layout_id
@@ -68,12 +90,14 @@ def apply_repair_action(
     if next_id is None:
         _fail(item.id, issues)
     object.__setattr__(item, "layout_id", next_id)
-    return SlideContent(
+    next_constraints = layout_constraints(next_id)
+    updated = SlideContent(
         slide_id=content.slide_id,
         title=content.title,
         layout_id=next_id,
         slots=content.slots,
     )
+    return constrain_slide_content(updated, next_constraints), next_constraints
 
 
 def _fail(slide_id: str, issues: list[VisualIssue]) -> NoReturn:
