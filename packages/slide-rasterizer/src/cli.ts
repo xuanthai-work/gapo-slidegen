@@ -1,5 +1,15 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import {
+  copyFileSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, extname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
@@ -73,6 +83,17 @@ function startStaticServer(root: string): Promise<{ origin: string; close: () =>
   });
 }
 
+function stageWorkDir(dist: string, slidePath: string): string {
+  const workDir = mkdtempSync(join(tmpdir(), "slide-rasterizer-"));
+  copyFileSync(join(dist, "index.html"), join(workDir, "index.html"));
+  const assetsDir = join(dist, "assets");
+  if (existsSync(assetsDir)) {
+    cpSync(assetsDir, join(workDir, "assets"), { recursive: true });
+  }
+  copyFileSync(resolve(slidePath), join(workDir, "slide.json"));
+  return workDir;
+}
+
 async function rasterize(slidePath: string, outPath: string): Promise<void> {
   const dist = distDir();
   const indexHtml = join(dist, "index.html");
@@ -80,11 +101,12 @@ async function rasterize(slidePath: string, outPath: string): Promise<void> {
     throw new Error(`missing ${indexHtml}; run npm run build --workspace @gapo-slidegen/slide-rasterizer`);
   }
   mkdirSync(dirname(resolve(outPath)), { recursive: true });
-  copyFileSync(resolve(slidePath), join(dist, "slide.json"));
-
-  const server = await startStaticServer(dist);
-  const browser = await chromium.launch();
+  const workDir = stageWorkDir(dist, slidePath);
+  let server: Awaited<ReturnType<typeof startStaticServer>> | undefined;
+  let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
   try {
+    server = await startStaticServer(workDir);
+    browser = await chromium.launch();
     const page = await browser.newPage({
       viewport: { width: STAGE_WIDTH, height: STAGE_HEIGHT },
       deviceScaleFactor: 1,
@@ -94,8 +116,9 @@ async function rasterize(slidePath: string, outPath: string): Promise<void> {
     await page.waitForSelector("canvas");
     await page.locator("canvas").first().screenshot({ path: outPath, type: "png" });
   } finally {
-    await browser.close();
-    await server.close();
+    await browser?.close();
+    await server?.close();
+    rmSync(workDir, { recursive: true, force: true });
   }
 
   const png = readFileSync(outPath);
