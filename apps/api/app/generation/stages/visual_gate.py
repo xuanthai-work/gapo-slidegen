@@ -145,3 +145,21 @@ def classify_extracted_text(
             )
         )
     return VisualGateResult(extracted_text=extracted, issues=issues)
+
+
+class CompanyGatewayOcrVisualGate:
+    """OCR visual gate via company gateway (placeholder until Task 7)."""
+
+    name = "company-gateway-ocr"
+
+    def __init__(self, **kwargs: object) -> None:
+        self.kwargs = kwargs
+
+    def inspect(
+        self,
+        *,
+        png: bytes,
+        slide: dict[str, object],
+        content: SlideContent,
+    ) -> VisualGateResult:
+        raise RuntimeError("OCR visual gate is not implemented")

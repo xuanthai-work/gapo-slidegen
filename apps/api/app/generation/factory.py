@@ -1,4 +1,5 @@
 import logging
+from pathlib import Path
 
 from ..config import get_settings
 from .company_gateway_provider import CompanyGatewayProvider
@@ -12,9 +13,11 @@ from .stages.content_writer import OutlineContentWriter, ProviderContentWriter
 from .stages.deck_planner import OutlineDeckPlanner, ProviderDeckPlanner
 from .stages.layout_selector import ThemeDispatchLayoutSelector
 from .stages.orchestrator import GenerationPipeline, NullAssetGenerator, NullAssetPlanner
+from .stages.slide_rasterizer import CliSlideRasterizer
 from .stages.slide_repairer import DeterministicSlideRepairer
 from .stages.slide_validator import RuleBasedSlideValidator
 from .stages.slide_planner import OutlineSlidePlanner, ProviderSlidePlanner
+from .stages.visual_gate import CompanyGatewayOcrVisualGate
 from .stub_provider import StubPresentationProvider
 
 logger = logging.getLogger(__name__)
@@ -64,8 +67,52 @@ def _build_story_planner():
     )
 
 
+def _build_visual_stages(settings, story_planner_name: str):
+    """Return (slide_rasterizer, visual_gate) per enable rules in spec §3.2."""
+    if not settings.visual_gate_enabled:
+        return None, None
+
+    provider_name = settings.generation_provider.strip().lower()
+    if provider_name == "stub":
+        logger.warning(
+            "Visual gate is enabled but generation_provider is stub; "
+            "leaving visual gate disabled (story planner=%s)",
+            story_planner_name,
+        )
+        return None, None
+
+    if provider_name != "company-gateway":
+        return None, None
+
+    model = (settings.visual_gate_model or "").strip()
+    if not model:
+        raise ProviderConfigurationError(
+            "Visual gate is enabled but SLIDEGEN_VISUAL_GATE_MODEL is missing"
+        )
+
+    api_key = (
+        settings.company_gateway_api_key.get_secret_value().strip()
+        if settings.company_gateway_api_key
+        else ""
+    )
+    rasterizer = CliSlideRasterizer(
+        command=settings.visual_gate_rasterizer_cmd,
+        repo_root=Path.cwd(),
+        save_screenshots=settings.visual_gate_save_screenshots,
+        storage_root=settings.storage_root,
+    )
+    gate = CompanyGatewayOcrVisualGate(
+        base_url=(settings.company_gateway_url or "").strip(),
+        api_key=api_key,
+        model=model,
+        chat_path=settings.company_gateway_chat_path,
+    )
+    return rasterizer, gate
+
+
 def build_story_provider() -> GenerationPipeline:
     """Build the full generation pipeline used by the worker."""
+    settings = get_settings()
     story_planner = _build_story_planner()
     outline_deck_planner = OutlineDeckPlanner()
     outline_slide_planner = OutlineSlidePlanner()
@@ -90,6 +137,7 @@ def build_story_provider() -> GenerationPipeline:
         if hasattr(story_planner, "write_content_batch")
         else outline_content_writer
     )
+    slide_rasterizer, visual_gate = _build_visual_stages(settings, story_planner.name)
     return GenerationPipeline(
         story_planner=story_planner,
         content_generator=ThemeDispatchContentGenerator(),
@@ -102,6 +150,9 @@ def build_story_provider() -> GenerationPipeline:
         slide_repairer=DeterministicSlideRepairer(),
         asset_planner=NullAssetPlanner(),
         asset_generator=NullAssetGenerator(),
+        slide_rasterizer=slide_rasterizer,
+        visual_gate=visual_gate,
+        visual_gate_max_repairs=settings.visual_gate_max_repairs,
     )
 
 
